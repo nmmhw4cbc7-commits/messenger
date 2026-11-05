@@ -183,8 +183,8 @@ async function register(page, national, e164, name, prefix) {
   await a.getByLabel('Message').fill('Who is in for Saturday?');
   await a.getByRole('button', { name: 'Send' }).click();
   await sleep(1000);
-  await b.getByText('Weekend trip').waitFor({ timeout: 10000 });
-  await b.getByText('Weekend trip').click();
+  await b.locator('.chat-row-title', { hasText: 'Weekend trip' }).waitFor({ timeout: 10000 });
+  await b.locator('.chat-row-title', { hasText: 'Weekend trip' }).click();
   await b.locator('.stack-item.top .bubble-text', { hasText: 'Who is in for Saturday?' }).waitFor();
   await b.getByLabel('Message').fill('Me! 🙋');
   await b.getByRole('button', { name: 'Send' }).click();
