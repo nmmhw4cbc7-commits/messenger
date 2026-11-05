@@ -189,6 +189,9 @@ function ChatRow({ conv, meId, onOpen }: { conv: Conv; meId?: string; onOpen: ()
 
   const onPointerDown = (e: PointerEvent) => {
     if (e.button !== 0 || e.clientX < 24) return;
+    // A new touch starts fresh: a long press before may not have been followed by a click (iOS),
+    // which would otherwise swallow this tap.
+    suppressClick.current = false;
     if (closeOpenRow && closeOpenRow !== close) {
       closeOpenRow();
       suppressClick.current = true;

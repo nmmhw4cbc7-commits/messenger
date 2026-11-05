@@ -23,15 +23,22 @@ const closers: Closer[] = [];
 let skipNextAnimation = false;
 let backWaiters: (() => void)[] = [];
 let closing: Promise<void> = Promise.resolve();
+let lastPushAt = -1000;
 
 history.replaceState({ haven: 0 }, '');
 
 async function closeTop(animated: boolean) {
   const closer = closers.pop();
-  if (closer) await closer(animated);
-  const waiters = backWaiters;
-  backWaiters = [];
-  waiters.forEach((w) => w());
+  try {
+    if (closer) await closer(animated);
+  } catch (err) {
+    console.error('closing a layer failed', err);
+  } finally {
+    setBusy(false);
+    const waiters = backWaiters;
+    backWaiters = [];
+    waiters.forEach((w) => w());
+  }
 }
 
 window.addEventListener('popstate', () => {
@@ -50,7 +57,8 @@ function openLayer(closer: Closer) {
 export function goBack(animated = true): Promise<void> {
   if (!closers.length) return Promise.resolve();
   if (!useHistory) {
-    closing = closing.then(() => closeTop(animated));
+    // A failed step must never block every later "back" (the chain would stay rejected).
+    closing = closing.catch(() => {}).then(() => closeTop(animated));
     return closing;
   }
   skipNextAnimation = !animated;
@@ -91,9 +99,18 @@ function animate(el: HTMLElement | null | undefined, from: string, to: string, d
   );
 }
 
+// While a screen slides, taps are ignored. A watchdog makes sure this lock can never stick,
+// e.g. when iOS pauses an animation because the app went to the background mid-transition.
+let busyTimer = 0;
 function setBusy(busy: boolean) {
   document.documentElement.classList.toggle('nav-busy', busy);
+  clearTimeout(busyTimer);
+  if (busy) busyTimer = window.setTimeout(() => document.documentElement.classList.remove('nav-busy'), DURATION + 400);
 }
+document.addEventListener('visibilitychange', () => {
+  setBusy(false);
+  document.documentElement.classList.remove('nav-swiping');
+});
 
 // ------------------------------------------------------------------ screen stack
 
@@ -128,6 +145,10 @@ export function Navigator({ root }: { root: JSX.Element }) {
 
   const api = useRef<NavApi>({
     push(node) {
+      // A double tap must not open the same screen twice.
+      const now = performance.now();
+      if (now - lastPushAt < 350) return;
+      lastPushAt = now;
       const key = nextKey++;
       pendingPush.current = key;
       setBusy(true);
