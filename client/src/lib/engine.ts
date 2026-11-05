@@ -140,7 +140,7 @@ async function finishSignIn(me: Me) {
 
 // ------------------------------------------------------------------ profile
 
-export async function updateProfile(patch: { name?: string; about?: string; readReceipts?: boolean }) {
+export async function updateProfile(patch: { name?: string; about?: string; readReceipts?: boolean; presence?: boolean }) {
   const res = await api<{ me: Me }>('PATCH', '/api/me', patch);
   await saveMe(res.me);
 }
@@ -1504,4 +1504,42 @@ if (typeof document !== 'undefined') {
     enablePush().catch(() => {});
   };
   document.addEventListener('click', ask, true);
+}
+
+// ------------------------------------------------------------------ last seen & online
+
+const sharesPresence = () => { const me = getState().me; return Boolean(me && me.presence !== false && identity); };
+
+function sendPresence(state: 'online' | 'offline') {
+  if (!sharesPresence()) return;
+  // keepalive: the "offline" ping still goes out while the app is being closed.
+  fetch('/api/presence', { method: 'POST', credentials: 'same-origin', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ state }) }).catch(() => {});
+}
+
+if (typeof document !== 'undefined') {
+  setInterval(() => { if (document.visibilityState === 'visible') sendPresence('online'); }, 30_000);
+  document.addEventListener('visibilitychange', () => sendPresence(document.visibilityState === 'visible' ? 'online' : 'offline'));
+  window.addEventListener('pagehide', () => sendPresence('offline'));
+  setTimeout(() => sendPresence('online'), 1500);
+}
+
+export type Presence = { visible: false } | { visible: true; online: boolean; lastSeen: number };
+
+export async function fetchPresence(userId: string): Promise<Presence> {
+  if (!sharesPresence()) return { visible: false };
+  return api<Presence>('GET', `/api/presence/${userId}`);
+}
+
+/** "online", "last seen today at 14:05", "last seen yesterday at 09:12", "last seen 3 Nov". */
+export function describePresence(p: Presence | null): string {
+  if (!p || !p.visible) return '';
+  if (p.online) return 'online';
+  const d = new Date(p.lastSeen);
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (d.toDateString() === today.toDateString()) return `last seen today at ${time}`;
+  if (d.toDateString() === yesterday.toDateString()) return `last seen yesterday at ${time}`;
+  return `last seen ${d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
 }

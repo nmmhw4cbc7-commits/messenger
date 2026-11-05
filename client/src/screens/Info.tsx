@@ -11,6 +11,7 @@ import { getNav, goBack, goBackMany, useNav } from '../ui/nav';
 import { Block, Key, PersonAdd, Pencil, Trash, Exit, Shield } from '../ui/icons';
 import { PeoplePicker } from './NewChat';
 import { ChatScreen } from './Chat';
+import { usePresence } from '../ui/usePresence';
 import { openPhoto } from '../ui/PhotoViewer';
 
 function VerifiedLabel({ userId }: { userId: string }) {
@@ -27,6 +28,7 @@ export function ContactInfo({ convId }: { convId: string }) {
   const [blocked, setBlocked] = useState<boolean | null>(null);
   const [busy, run] = useAsync();
   const other = conv && me ? otherMember(conv, me.id) : null;
+  const presence = usePresence(other?.id);
 
   useEffect(() => {
     if (!other) return;
@@ -65,6 +67,7 @@ export function ContactInfo({ convId }: { convId: string }) {
         )}
         <h1>{name}</h1>
         {other && <p class="hero-sub">{prettyPhone(other.phone)}</p>}
+        {presence && <p class={`hero-presence${presence === 'online' ? ' online' : ''}`}>{presence}</p>}
         {alias && other?.name && <p class="hero-sub">Calls themselves “{other.name}”</p>}
         {other?.about && <p class="hero-about">{other.about}</p>}
       </div>

@@ -198,6 +198,7 @@ const serializeMe = (u: Row, device: Row, devices: DeviceKey[]) => ({
   avatarVersion: Number(u.avatar_version),
   hasPin: Boolean(u.pin_hash),
   readReceipts: u.read_receipts !== false,
+  presence: u.presence !== false,
   deviceId: device.id,
   inbox: device.inbox_token,
   devices,
@@ -944,10 +945,15 @@ route('GET', '/me', async ({ req, reply }) => ({ me: await meOf(await currentUse
 
 route('PATCH', '/me', async ({ req, reply, body }) => {
   const user = await currentUser(req, reply);
-  const b = shape<{ name?: string; about?: string; readReceipts?: boolean }>(body, {
-    name: [str(0, 200), false], about: [str(0, 500), false], readReceipts: [(v) => typeof v === 'boolean', false],
+  const b = shape<{ name?: string; about?: string; readReceipts?: boolean; presence?: boolean }>(body, {
+    name: [str(0, 200), false], about: [str(0, 500), false], readReceipts: [(v) => typeof v === 'boolean', false], presence: [(v) => typeof v === 'boolean', false],
   });
   if (b.readReceipts !== undefined) await sql`update haven.users set read_receipts = ${b.readReceipts} where id = ${user.id}`;
+  // Turning "last seen & online" off also forgets when this user was last seen.
+  if (b.presence !== undefined) {
+    await sql`update haven.users set presence = ${b.presence}, last_seen_at = case when ${b.presence} then last_seen_at else 0 end,
+              online_until = case when ${b.presence} then online_until else 0 end where id = ${user.id}`;
+  }
   if (b.name !== undefined) {
     const name = cleanLine(b.name, 40);
     if (!name) throw new HttpError(400, 'invalid_name', 'Please enter a name.');
@@ -1021,6 +1027,29 @@ route('DELETE', '/me', async ({ req, reply, body }) => {
   await broadcast(contacts, 'conversations');
   await notifyMessages(contacts);
   return ok;
+});
+
+// ---- last seen & online (both people must share it, like read receipts)
+
+route('POST', '/presence', async ({ req, reply, body }) => {
+  const user = await currentUser(req, reply);
+  const { state } = shape<{ state: string }>(body, { state: [(v) => v === 'online' || v === 'offline', true] });
+  await enforce(`presence:${user.id}`, 600, HOUR);
+  if (user.presence === false) return ok;
+  const t = now();
+  await sql`update haven.users set last_seen_at = ${t}, online_until = ${state === 'online' ? t + 75_000 : t} where id = ${user.id}`;
+  return ok;
+});
+
+route('GET', '/presence/:userId', async ({ req, reply, params }) => {
+  const user = await currentUser(req, reply);
+  if (user.presence === false) return { visible: false };
+  const [shared] = await sql`select 1 from haven.members a join haven.members b on a.conversation_id = b.conversation_id
+                             where a.user_id = ${user.id} and b.user_id = ${params.userId} limit 1`;
+  if (!shared || (await hasBlocked(params.userId, user.id))) return { visible: false };
+  const [u] = await sql`select presence, last_seen_at, online_until from haven.users where id = ${params.userId}`;
+  if (!u || u.presence === false || !Number(u.last_seen_at)) return { visible: false };
+  return { visible: true, online: Number(u.online_until) > now(), lastSeen: Number(u.last_seen_at) };
 });
 
 // ---- people

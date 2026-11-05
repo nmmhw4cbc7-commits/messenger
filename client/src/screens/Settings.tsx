@@ -11,7 +11,7 @@ import { parsePhoneNumberFromString } from 'libphonenumber-js/min';
 import { errorMessage } from '../lib/api';
 import { Avatar, Button, Cell, Screen, Section, Segmented, Spinner, Toggle, NavButton, actionSheet, confirmAction, toast, useAsync, Empty } from '../ui/components';
 import { goBack, useNav } from '../ui/nav';
-import { Bell, Block, Camera, Lock, Logout, Moon, Shield, Trash, Info, CheckDouble, Key } from '../ui/icons';
+import { Bell, Block, Camera, Lock, Logout, Moon, Shield, Trash, Info, CheckDouble, Key, Clock } from '../ui/icons';
 import { DevicesScreen } from './Devices';
 
 export function SettingsTab() {
@@ -32,13 +32,19 @@ export function SettingsTab() {
         </button>
       </Section>
 
-      <Section header="Privacy & security" footer="With read receipts off, others don’t see when you read their messages.">
+      <Section header="Privacy & security" footer="With read receipts off, others don’t see when you read their messages. With last seen & online off, others don’t see when you were online, and you don’t see it for them either.">
         <Cell icon={<Lock size={19} />} iconBg="ink" title="Registration lock" value={me.hasPin ? 'On' : 'Off'} chevron onClick={() => nav.push(<RegistrationLock />)} />
         <Cell
           icon={<CheckDouble size={19} />}
           iconBg="ink"
           title="Read receipts"
           right={<Toggle label="Read receipts" checked={me.readReceipts !== false} onChange={(v) => updateProfile({ readReceipts: v }).catch((err) => toast(errorMessage(err), 'error'))} />}
+        />
+        <Cell
+          icon={<Clock size={19} />}
+          iconBg="ink"
+          title="Last seen & online"
+          right={<Toggle label="Last seen & online" checked={me.presence !== false} onChange={(v) => updateProfile({ presence: v }).catch((err) => toast(errorMessage(err), 'error'))} />}
         />
         <Cell icon={<Block size={19} />} iconBg="ink" title="Blocked people" chevron onClick={() => nav.push(<BlockedPeople />)} />
         <Cell icon={<Key size={19} />} iconBg="ink" title="Linked devices" value={String(me.devices?.length || 1)} chevron onClick={() => nav.push(<DevicesScreen />)} />

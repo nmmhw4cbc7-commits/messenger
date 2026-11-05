@@ -21,6 +21,8 @@ export interface Me {
   /** Secret name of this user's realtime channel. */
   inbox: string;
   readReceipts: boolean;
+  /** Share "last seen & online" (and see it for others). */
+  presence?: boolean;
 }
 
 export interface Profile {

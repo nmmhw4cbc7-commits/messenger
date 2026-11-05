@@ -11,6 +11,7 @@ import { Avatar, Button, confirmAction, toast } from '../ui/components';
 import { getNav, goBack, useNav } from '../ui/nav';
 import { ArrowUp, ChevronLeft, Clock, Alert, Check, CheckDouble, Lock, Reply, Close, Copy, Trash, Pencil } from '../ui/icons';
 import { describeSystem } from './system';
+import { usePresence } from '../ui/usePresence';
 import { ContactInfo, GroupInfo, SafetyNumberScreen } from './Info';
 
 const GROUP_GAP = 3 * 60_000;
@@ -42,6 +43,9 @@ export function ChatScreen({ convId }: { convId: string }) {
     return () => setOpenConv(null);
   }, [convId]);
 
+  const presenceOf = conv?.kind === 'direct' && me ? otherMember(conv, me.id)?.id : undefined;
+  const presence = usePresence(presenceOf);
+
   if (!conv || !me) {
     return (
       <div class="screen">
@@ -56,7 +60,7 @@ export function ChatScreen({ convId }: { convId: string }) {
   const changed = conv.members.filter((m) => m.id !== me.id && pins[m.id]?.needsAck);
   const subtitle = conv.kind === 'group'
     ? conv.members.map((m) => (m.id === me.id ? 'You' : displayName(m).split(' ')[0])).join(', ')
-    : 'End-to-end encrypted';
+    : presence || 'End-to-end encrypted';
 
   let blockedReason = '';
   if (conv.left) blockedReason = conv.kind === 'group' ? 'You are no longer a member of this group.' : 'This chat is no longer available.';
@@ -80,7 +84,7 @@ export function ChatScreen({ convId }: { convId: string }) {
             <Avatar id={conv.kind === 'group' ? conv.id : other?.id ?? conv.id} name={title} src={other ? avatarUrl(other) : null} size={38} group={conv.kind === 'group'} />
             <span class="chat-header-text">
               <span class="chat-header-title">{title}</span>
-              <span class="chat-header-sub">{subtitle}</span>
+              <span class={`chat-header-sub${presence === 'online' ? ' online' : ''}`}>{subtitle}</span>
             </span>
           </button>
         </div>
