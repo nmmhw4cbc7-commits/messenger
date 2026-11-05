@@ -6,14 +6,6 @@ import { initials } from '../lib/format';
 
 // ------------------------------------------------------------------ avatar
 
-const HUES = ['#2f7a6e', '#3d6aa8', '#8a5a9e', '#b4573c', '#a67c1f', '#3f7d3a', '#9a4767', '#4b6478'];
-
-function hueFor(id: string) {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return HUES[h % HUES.length];
-}
-
 export function Avatar({ id, name, src, size = 40, group = false }: { id: string; name: string; src?: string | null; size?: number; group?: boolean }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [src]);
@@ -23,7 +15,7 @@ export function Avatar({ id, name, src, size = 40, group = false }: { id: string
   }
   const text = group ? '' : initials(name);
   return (
-    <span class="avatar avatar-fallback" style={{ ...style, background: hueFor(id) }} aria-hidden="true">
+    <span class={`avatar avatar-fallback${group ? ' group' : ''}`} data-id={id} style={{ ...style, background: group ? 'var(--signal)' : 'var(--ink)' }} aria-hidden="true">
       {text || (group ? <People size={Math.round(size * 0.5)} /> : <Person size={Math.round(size * 0.5)} />)}
     </span>
   );
@@ -123,7 +115,7 @@ export function Cell({ icon, iconBg, title, subtitle, value, chevron, danger, ac
   const content = (
     <>
       {icon && (
-        <span class={`cell-icon${iconBg ? ' filled' : ''}`} style={iconBg ? { background: iconBg } : undefined}>
+        <span class={`cell-icon${iconBg ? ' filled' : ''}`}>
           {icon}
         </span>
       )}

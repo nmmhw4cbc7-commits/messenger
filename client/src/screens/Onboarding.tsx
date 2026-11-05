@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { Button, Screen, Avatar, Spinner, useAsync } from '../ui/components';
 import { PhoneField, type PhoneValue } from '../ui/PhoneField';
 import { goBack, useNav } from '../ui/nav';
-import { Lock, Camera, Shield, Key } from '../ui/icons';
+import { Lock, Camera } from '../ui/icons';
 import { guessCountry, toE164, prettyPhone } from '../lib/phone';
 import { startVerification, checkVerification, submitPin, forgetDevice, updateProfile, uploadAvatar, avatarUrl, type Verification } from '../lib/engine';
 import { errorMessage } from '../lib/api';
@@ -22,16 +22,17 @@ export function Welcome() {
 
   return (
     <div class="screen welcome">
+      <div class="welcome-top">
+        <span class="led">Encrypted</span>
+        <span>v1.0</span>
+      </div>
       <div class="welcome-body">
-        <div class="brand-mark" aria-hidden="true">
-          <img src="/icons/mark.svg" alt="" width={88} height={88} />
-        </div>
-        <h1>Haven</h1>
+        <h1 class="wordmark">Haven</h1>
         <p class="welcome-lede">Private conversations, on your terms.</p>
-        <ul class="welcome-points">
-          <li><span class="point-icon"><Lock size={20} /></span><span>Every message is end-to-end encrypted on your device.</span></li>
-          <li><span class="point-icon"><Shield size={20} /></span><span>The server deletes messages once they are delivered.</span></li>
-          <li><span class="point-icon"><Key size={20} /></span><span>Verify the people you talk to with safety numbers.</span></li>
+        <ul class="spec">
+          <li><span>01</span><span><strong>End-to-end</strong>Every message is encrypted on your device.</span></li>
+          <li><span>02</span><span><strong>Delete on delivery</strong>The server forgets messages once they arrive.</span></li>
+          <li><span>03</span><span><strong>Verified</strong>Compare safety numbers with the people you talk to.</span></li>
         </ul>
       </div>
       <div class="welcome-actions">
@@ -42,7 +43,7 @@ export function Welcome() {
             <Button variant="plain" onClick={() => forgetDevice()}>Use another number</Button>
           </>
         ) : (
-          <Button onClick={() => nav.push(<PhoneScreen />)}>Get started</Button>
+          <Button onClick={() => nav.push(<PhoneScreen />)}><span class="cta-dot" aria-hidden="true" />Get started</Button>
         )}
       </div>
     </div>

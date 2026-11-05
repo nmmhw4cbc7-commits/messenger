@@ -45,7 +45,7 @@ export function ContactInfo({ convId }: { convId: string }) {
 
       {other && (
         <Section footer="Compare safety numbers in person or on a call to make sure no one is listening in.">
-          <Cell icon={<Key size={20} />} iconBg="#4b6478" title="Safety number" right={<VerifiedLabel userId={other.id} />} chevron onClick={() => nav.push(<SafetyNumberScreen userId={other.id} />)} />
+          <Cell icon={<Key size={20} />} iconBg="ink" title="Safety number" right={<VerifiedLabel userId={other.id} />} chevron onClick={() => nav.push(<SafetyNumberScreen userId={other.id} />)} />
         </Section>
       )}
 

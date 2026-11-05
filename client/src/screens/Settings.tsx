@@ -31,15 +31,15 @@ export function SettingsTab() {
       </Section>
 
       <Section header="Privacy & security">
-        <Cell icon={<Lock size={19} />} iconBg="#2f7a6e" title="Registration lock" value={me.hasPin ? 'On' : 'Off'} chevron onClick={() => nav.push(<RegistrationLock />)} />
-        <Cell icon={<Block size={19} />} iconBg="#b4573c" title="Blocked people" chevron onClick={() => nav.push(<BlockedPeople />)} />
-        <Cell icon={<Shield size={19} />} iconBg="#3d6aa8" title="How Haven protects you" chevron onClick={() => nav.push(<SecurityInfo />)} />
+        <Cell icon={<Lock size={19} />} iconBg="ink" title="Registration lock" value={me.hasPin ? 'On' : 'Off'} chevron onClick={() => nav.push(<RegistrationLock />)} />
+        <Cell icon={<Block size={19} />} iconBg="ink" title="Blocked people" chevron onClick={() => nav.push(<BlockedPeople />)} />
+        <Cell icon={<Shield size={19} />} iconBg="ink" title="How Haven protects you" chevron onClick={() => nav.push(<SecurityInfo />)} />
       </Section>
 
       <Section header="Preferences">
-        <Cell icon={<Bell size={19} />} iconBg="#a67c1f" title="Notifications" chevron onClick={() => nav.push(<Notifications />)} />
+        <Cell icon={<Bell size={19} />} iconBg="ink" title="Notifications" chevron onClick={() => nav.push(<Notifications />)} />
         <div class="cell cell-stacked">
-          <span class="cell-icon filled" style={{ background: '#4b6478' }}><Moon size={19} /></span>
+          <span class="cell-icon filled"><Moon size={19} /></span>
           <span class="cell-main">
             <span class="cell-title">Appearance</span>
             <Segmented<Theme> value={theme} onChange={setTheme} options={[{ value: 'system', label: 'Auto' }, { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }]} />
