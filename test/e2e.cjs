@@ -1,21 +1,45 @@
-// End-to-end check with two simulated phones. Needs a running server with
-// SMS_PROVIDER=console whose log is passed as the first argument.
-//   node test/e2e.cjs <server.log> <screenshot dir>
+// End-to-end check against a deployed Haven with simulated phones.
+// Telegram is simulated by posting updates to the bot webhook, which needs
+// the webhook secret (from haven.kv) in TELEGRAM_WEBHOOK_SECRET.
+//   BASE=https://… TELEGRAM_WEBHOOK_SECRET=… WEBHOOK_URL=… node test/e2e.cjs <screenshot dir>
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 
-const LOG = process.argv[2];
-const SHOTS = process.argv[3];
-const BASE = process.env.BASE || 'http://localhost:8080';
+const SHOTS = process.argv[2];
+const BASE = process.env.BASE;
+const SECRET = process.env.TELEGRAM_WEBHOOK_SECRET;
+const WEBHOOK = process.env.WEBHOOK_URL;
 fs.mkdirSync(SHOTS, { recursive: true });
 
-function codeFor(phone) {
-  const lines = fs.readFileSync(LOG, 'utf8').split('\n').filter((l) => l.includes(`verification code for ${phone}`));
-  const m = lines.at(-1)?.match(/: (\d{6})/);
-  if (!m) throw new Error(`no code for ${phone}`);
-  return m[1];
+let updateId = 1000;
+async function telegramUpdate(message) {
+  const res = await fetch(WEBHOOK, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-telegram-bot-api-secret-token': SECRET },
+    body: JSON.stringify({ update_id: updateId++, message: { message_id: updateId, date: Math.floor(Date.now() / 1000), ...message } }),
+  });
+  if (res.status !== 200) throw new Error(`webhook ${res.status}`);
 }
+
+/** Do what a person does in Telegram: start the bot with the link, then share their own number. */
+async function confirmInTelegram(page, e164, tgUserId) {
+  const link = await page.locator('a', { hasText: 'Open Telegram' }).getAttribute('href');
+  const startToken = new URL(link).searchParams.get('start');
+  const chat = { id: tgUserId, type: 'private', first_name: 'Test' };
+  const from = { id: tgUserId, is_bot: false, first_name: 'Test' };
+  await telegramUpdate({ chat, from, text: `/start ${startToken}` });
+  await telegramUpdate({ chat, from, contact: { phone_number: e164.replace('+', ''), first_name: 'Test', user_id: tgUserId } });
+}
+
+// Random test numbers each run (German mobile range 0151).
+const rnd = () => String(Math.floor(10_000_000 + Math.random() * 89_999_999));
+const A_LOCAL = rnd();
+const B_LOCAL = rnd();
+const A_NATIONAL = `0151 ${A_LOCAL}`;
+const B_NATIONAL = `0151 ${B_LOCAL}`;
+const A_E164 = `+49151${A_LOCAL}`;
+const B_E164 = `+49151${B_LOCAL}`;
 
 const errors = [];
 async function phone(browser, label, scheme = 'light') {
@@ -39,11 +63,11 @@ async function register(page, national, e164, name, prefix) {
   if (prefix) await shot(page, `${prefix}-02-phone`);
   await page.getByLabel('Phone number').fill(national);
   await page.getByRole('button', { name: 'Continue' }).click();
-  await page.getByLabel('Verification code').waitFor();
+  await page.locator('a', { hasText: 'Open Telegram' }).waitFor({ timeout: 15000 });
   await sleep(500);
-  if (prefix) await shot(page, `${prefix}-03-code`);
-  await page.getByLabel('Verification code').pressSequentially(codeFor(e164), { delay: 30 });
-  await page.getByLabel('Your name').waitFor({ timeout: 10000 });
+  if (prefix) await shot(page, `${prefix}-03-telegram`);
+  await confirmInTelegram(page, e164, Number(e164.slice(-9)));
+  await page.getByLabel('Your name').waitFor({ timeout: 15000 });
   if (prefix) await shot(page, `${prefix}-04-profile`);
   await page.getByLabel('Your name').fill(name);
   await page.getByRole('button', { name: 'Continue' }).click();
@@ -59,14 +83,14 @@ async function register(page, national, e164, name, prefix) {
   await a.goto(BASE);
   await sleep(600);
   await shot(a, 'a-01-welcome');
-  await register(a, '0151 11111111', '+4915111111111', 'Anna Berger', 'a');
+  await register(a, A_NATIONAL, A_E164, 'Anna Berger', 'a');
   await shot(a, 'a-05-empty');
-  await register(b, '0151 22222222', '+4915122222222', 'Ben Okafor');
+  await register(b, B_NATIONAL, B_E164, 'Ben Okafor');
 
   // A starts a chat with B by number
   await a.getByRole('button', { name: 'New chat' }).click();
   await sleep(500);
-  await a.getByLabel('Phone number').fill('015122222222');
+  await a.getByLabel('Phone number').fill(B_NATIONAL);
   await a.getByRole('button', { name: 'Find' }).click();
   await a.getByText('Ben Okafor').first().waitFor();
   await shot(a, 'a-06-newchat-found');
@@ -207,14 +231,13 @@ async function register(page, national, e164, name, prefix) {
   // ---- B moves to a new device: A must see a safety number notice, and new
   // messages must be readable on B's new device.
   const b2 = await phone(browser, 'B2');
-  await sleep(31000); // per-number resend limit
   await b2.goto(BASE);
   await b2.getByRole('button', { name: 'Get started' }).click();
-  await b2.getByLabel('Phone number').fill('0151 22222222');
+  await b2.getByLabel('Phone number').fill(B_NATIONAL);
   await b2.getByRole('button', { name: 'Continue' }).click();
-  await b2.getByLabel('Verification code').waitFor();
-  await b2.getByLabel('Verification code').pressSequentially(codeFor('+4915122222222'), { delay: 30 });
-  await b2.getByRole('heading', { name: 'Chats', exact: true }).waitFor({ timeout: 10000 });
+  await b2.locator('a', { hasText: 'Open Telegram' }).waitFor({ timeout: 15000 });
+  await confirmInTelegram(b2, B_E164, Number(B_E164.slice(-9)));
+  await b2.getByRole('heading', { name: 'Chats', exact: true }).waitFor({ timeout: 15000 });
   await sleep(1500);
 
   await a.locator('.chat-row', { hasText: 'Ben Okafor' }).click();
@@ -240,11 +263,11 @@ async function register(page, national, e164, name, prefix) {
   const a2 = await phone(browser, 'A2');
   await a2.goto(BASE);
   await a2.getByRole('button', { name: 'Get started' }).click();
-  await a2.getByLabel('Phone number').fill('0151 11111111');
+  await a2.getByLabel('Phone number').fill(A_NATIONAL);
   await a2.getByRole('button', { name: 'Continue' }).click();
-  await a2.getByLabel('Verification code').waitFor();
-  await a2.getByLabel('Verification code').pressSequentially(codeFor('+4915111111111'), { delay: 30 });
-  await a2.getByLabel('PIN').waitFor({ timeout: 10000 });
+  await a2.locator('a', { hasText: 'Open Telegram' }).waitFor({ timeout: 15000 });
+  await confirmInTelegram(a2, A_E164, Number(A_E164.slice(-9)));
+  await a2.getByLabel('PIN').waitFor({ timeout: 15000 });
   await a2.getByLabel('PIN').fill('111111');
   await a2.getByRole('button', { name: 'Continue' }).click();
   await a2.getByText(/Wrong PIN/).waitFor();
