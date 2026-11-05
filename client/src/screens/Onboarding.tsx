@@ -136,9 +136,9 @@ function TelegramScreen({ verification }: { verification: Verification }) {
           Confirm <strong class="nowrap">{prettyPhone(verification.phone)}</strong> with your Telegram account. Telegram only shares this number, nothing else.
         </p>
         <ol class="steps">
-          <li><span>1</span>Tap “Open Telegram”</li>
-          <li><span>2</span>Tap <strong>Start</strong>, then <strong>Share my phone number</strong></li>
-          <li><span>3</span>Come back here. Haven continues on its own</li>
+          <li><span class="step-num">1</span><span>Tap “Open Telegram”</span></li>
+          <li><span class="step-num">2</span><span>Tap <strong>Start</strong>, then <strong>Share my phone number</strong></span></li>
+          <li><span class="step-num">3</span><span>Come back here. Haven continues on its own</span></li>
         </ol>
         {error || expired ? (
           <p class="form-error shown" role="alert">{error || 'This confirmation expired.'}</p>

@@ -108,7 +108,7 @@ async function register(page, national, e164, name, prefix) {
   await sleep(300);
   await shot(b, 'b-01-list-unread');
   await b.getByText('Anna Berger').click();
-  await b.getByText('Can you read this?').waitFor();
+  await b.locator('.stack-item.top .bubble-text', { hasText: 'Can you read this?' }).waitFor();
   await b.getByLabel('Message').fill('Loud and clear. Only we can read this.');
   await b.getByRole('button', { name: 'Send' }).click();
   await sleep(300);
@@ -116,7 +116,7 @@ async function register(page, national, e164, name, prefix) {
   await b.getByRole('button', { name: 'Send' }).click();
   await sleep(1200);
   await shot(b, 'b-02-chat');
-  await a.getByText('Loud and clear. Only we can read this.').waitFor({ timeout: 10000 });
+  await a.locator('.stack-item.top .bubble-text', { hasText: 'Loud and clear. Only we can read this.' }).waitFor({ timeout: 10000 });
   await sleep(300);
   await shot(a, 'a-07-chat');
 
@@ -185,7 +185,7 @@ async function register(page, national, e164, name, prefix) {
   await sleep(1000);
   await b.getByText('Weekend trip').waitFor({ timeout: 10000 });
   await b.getByText('Weekend trip').click();
-  await b.getByText('Who is in for Saturday?').waitFor();
+  await b.locator('.stack-item.top .bubble-text', { hasText: 'Who is in for Saturday?' }).waitFor();
   await b.getByLabel('Message').fill('Me! 🙋');
   await b.getByRole('button', { name: 'Send' }).click();
   await sleep(1200);
