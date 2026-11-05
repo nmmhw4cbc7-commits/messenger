@@ -3,6 +3,7 @@ import { encode } from 'uqr';
 import jsQR from 'jsqr';
 import { approveLink, checkLink, listDevices, removeDevice, startLink, type LinkRequest, type LinkedDevice } from '../lib/engine';
 import { errorMessage } from '../lib/api';
+import { useStore } from '../lib/store';
 import { formatListTime } from '../lib/format';
 import { Button, Cell, Empty, Screen, Section, Spinner, alertDialog, confirmAction, toast, useAsync } from '../ui/components';
 import { goBack, useNav } from '../ui/nav';
@@ -95,8 +96,10 @@ export function DevicesScreen() {
   const nav = useNav();
   const [devices, setDevices] = useState<LinkedDevice[] | null>(null);
   const [, run] = useAsync();
+  const deviceCount = useStore((st) => st.me?.devices?.length ?? 0);
   const load = () => listDevices().then(setDevices, (err) => toast(errorMessage(err), 'error'));
-  useEffect(() => { load(); }, []);
+  // Reload when a device joins or leaves (the server tells all of this account's devices).
+  useEffect(() => { load(); }, [deviceCount]);
 
   return (
     <Screen back title="Linked devices" grouped right={undefined}>

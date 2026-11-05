@@ -186,6 +186,45 @@ async function register(page, national, e164, name, prefix) {
   await shot(b, 'b-07-attachments');
   await shot(a, 'a-07c-attachments');
 
+  // ---- Linked device: a third browser joins Anna's account by pairing code
+  const ad = await phone(browser, 'AD');
+  await ad.goto(BASE);
+  await ad.getByRole('button', { name: 'Link to an existing account' }).click();
+  await ad.locator('.pair-code').waitFor({ timeout: 15000 });
+  await sleep(400);
+  await shot(ad, 'ad-01-qr');
+  const pairCode = (await ad.locator('.pair-code').innerText()).replace(/\s/g, '');
+  await a.getByRole('button', { name: 'Back' }).click();
+  await sleep(500);
+  await a.getByRole('button', { name: 'Settings' }).click();
+  await a.getByText('Linked devices').click();
+  await a.getByRole('button', { name: /Link a device/ }).click();
+  await a.getByLabel('Pairing code').fill(pairCode);
+  await a.getByRole('button', { name: 'Link', exact: true }).click();
+  await a.locator('.alert-buttons button', { hasText: 'Link' }).click();
+  await ad.getByRole('heading', { name: 'Chats', exact: true }).waitFor({ timeout: 20000 });
+  await a.locator('.stack-item.top .cell-title', { hasText: /·/ }).first().waitFor({ timeout: 15000 });
+  await shot(a, 'a-07d-devices');
+  // Ben writes: both of Anna's devices receive it
+  await b.getByRole('textbox', { name: 'Message' }).fill('Hello to both of your devices');
+  await b.getByRole('button', { name: 'Send' }).click();
+  await ad.locator('.chat-row', { hasText: 'Ben Okafor' }).click();
+  await ad.locator('.stack-item.top .bubble-text', { hasText: 'Hello to both of your devices' }).waitFor({ timeout: 20000 });
+  // The linked device writes: Ben gets it, and Anna's phone shows it as her own message
+  await ad.getByRole('textbox', { name: 'Message' }).fill('Sent from my laptop');
+  await ad.getByRole('button', { name: 'Send' }).click();
+  await b.locator('.stack-item.top .bubble-text', { hasText: 'Sent from my laptop' }).waitFor({ timeout: 20000 });
+  await a.locator('.stack-item.top .cell-title', { hasText: 'Linux · Chrome' }).nth(1).waitFor({ timeout: 15000 });
+  await shot(a, 'a-07d-devices');
+  await a.getByRole('button', { name: 'Back' }).click();
+  await sleep(500);
+  await a.getByRole('button', { name: 'Chats' }).click();
+  await a.locator('.chat-row', { hasText: 'Ben Okafor' }).click();
+  await a.locator('.stack-item.top .bubble-row.out .bubble-text', { hasText: 'Sent from my laptop' }).waitFor({ timeout: 20000 });
+  await sleep(500);
+  await shot(ad, 'ad-02-chat');
+  await shot(a, 'a-07e-own-from-laptop');
+
   // Edge swipe from the left goes back to the chat list
   await a.mouse.move(4, 420);
   await a.mouse.down();
