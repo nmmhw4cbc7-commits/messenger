@@ -3,9 +3,9 @@
 // and decrypted messages. Signing out deletes the whole database.
 
 const DB_NAME = 'haven';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
-export type StoreName = 'meta' | 'pins' | 'convs' | 'messages';
+export type StoreName = 'meta' | 'pins' | 'convs' | 'messages' | 'files';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -13,13 +13,17 @@ function open(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
+    req.onupgradeneeded = (e) => {
       const db = req.result;
-      db.createObjectStore('meta');
-      db.createObjectStore('pins', { keyPath: 'userId' });
-      db.createObjectStore('convs', { keyPath: 'id' });
-      const messages = db.createObjectStore('messages', { keyPath: 'id' });
-      messages.createIndex('byConv', ['convId', 'sortKey']);
+      if (e.oldVersion < 1) {
+        db.createObjectStore('meta');
+        db.createObjectStore('pins', { keyPath: 'userId' });
+        db.createObjectStore('convs', { keyPath: 'id' });
+        const messages = db.createObjectStore('messages', { keyPath: 'id' });
+        messages.createIndex('byConv', ['convId', 'sortKey']);
+      }
+      // Decrypted attachments, keyed by message id.
+      if (e.oldVersion < 2) db.createObjectStore('files');
     };
     req.onsuccess = () => {
       const db = req.result;

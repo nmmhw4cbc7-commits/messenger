@@ -106,7 +106,13 @@ async function preview(): Promise<{ title: string; body: string; tag: string; co
     else if (p.type === 'reaction') {
       if (!p.emoji) continue;
       body = `Reacted ${p.emoji}`;
-    } else continue;
+    } else if (p.type === 'media') {
+      body = p.media.viewOnce ? 'Photo · view once' : p.media.kind === 'voice' ? 'Voice message' : p.media.kind === 'video' ? 'Video' : 'Photo';
+      if (p.media.caption && !p.media.viewOnce) body += ` · ${p.media.caption}`;
+    } else if (p.type === 'location') body = 'Location';
+    else if (p.type === 'contact') body = `Contact · ${p.name}`;
+    else if (p.type === 'poll') body = `Poll · ${p.question}`;
+    else continue;
     return { title, body: body.length > 180 ? `${body.slice(0, 177)}…` : body, tag: m.conversationId, convId: m.conversationId };
   }
   return null;

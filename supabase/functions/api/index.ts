@@ -28,6 +28,7 @@ const COOKIE = '__Host-haven';
 const MAX_BODY = 100 * 1024;
 const MAX_AVATAR = 300 * 1024;
 const DEFAULT_REGION = 'DE';
+const MAX_ATTACHMENT = 25 * 1024 * 1024;
 
 const now = () => Date.now();
 const randomId = () => randomBytes(16).toString('base64url');
@@ -585,6 +586,8 @@ async function cleanup() {
   await sql`delete from haven.rate_limits where reset_at < ${t}`;
   await sql`delete from haven.messages where created_at < ${t - RETENTION_DAYS * DAY}`;
   await sql`delete from haven.messages m where not exists (select 1 from haven.message_recipients r where r.seq = m.seq)`;
+  const old = await sql`select name from storage.objects where bucket_id = 'attachments' and created_at < now() - make_interval(days => ${RETENTION_DAYS}) limit 200`;
+  if (old.length) await storageCall('DELETE', '/object/attachments', { prefixes: old.map((o) => o.name) }).catch(() => {});
 }
 
 // ------------------------------------------------------------------ routing
@@ -1010,6 +1013,56 @@ route('POST', '/conversations/:id/read', async ({ req, reply, params, body }) =>
   const updated = await sql`update haven.members set last_read_at = ${upTo}
                             where conversation_id = ${params.id} and user_id = ${user.id} and last_read_at < ${upTo} returning 1`;
   if (updated.length) await broadcast((await memberIds(params.id)).filter((id) => id !== user.id), 'read');
+  return ok;
+});
+
+// ---- attachments (end-to-end encrypted before upload; the server only sees ciphertext)
+
+async function storageCall(method: string, path: string, body: unknown) {
+  const res = await fetch(`${SUPABASE_URL}/storage/v1${path}`, {
+    method,
+    headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10_000),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`storage ${res.status}: ${JSON.stringify(data)}`);
+  return data;
+}
+
+const ATTACHMENT_PATH = /^([A-Za-z0-9_-]{16,40})\/([A-Za-z0-9_-]{16,40})$/;
+
+async function attachmentConv(path: unknown, userId: string) {
+  const m = typeof path === 'string' ? path.match(ATTACHMENT_PATH) : null;
+  if (!m) throw new HttpError(400, 'invalid_request');
+  await membershipOrThrow(m[1], userId);
+  return m[1];
+}
+
+route('POST', '/attachments', async ({ req, reply, body }) => {
+  const user = await currentUser(req, reply);
+  const b = shape<{ conversationId: string; size: number }>(body, { conversationId: [isId, true], size: [int(1, MAX_ATTACHMENT), true] });
+  await enforce(`upload:${user.id}`, 300, HOUR);
+  await membershipOrThrow(b.conversationId, user.id);
+  const path = `${b.conversationId}/${randomId()}`;
+  const data = await storageCall('POST', `/object/upload/sign/attachments/${path}`, {});
+  return { path, uploadUrl: `${SUPABASE_URL}/storage/v1${data.url}` };
+});
+
+route('POST', '/attachments/url', async ({ req, reply, body }) => {
+  const user = await currentUser(req, reply);
+  const { path } = shape<{ path: string }>(body, { path: [str(33, 81), true] });
+  await enforce(`download:${user.id}`, 2000, HOUR);
+  await attachmentConv(path, user.id);
+  const data = await storageCall('POST', `/object/sign/attachments/${path}`, { expiresIn: 600 });
+  return { url: `${SUPABASE_URL}/storage/v1${data.signedURL ?? data.signedUrl}` };
+});
+
+route('POST', '/attachments/delete', async ({ req, reply, body }) => {
+  const user = await currentUser(req, reply);
+  const { path } = shape<{ path: string }>(body, { path: [str(33, 81), true] });
+  await attachmentConv(path, user.id);
+  await storageCall('DELETE', '/object/attachments', { prefixes: [path] }).catch(() => {});
   return ok;
 });
 

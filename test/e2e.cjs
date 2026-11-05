@@ -47,7 +47,8 @@ async function phone(browser, label, scheme = 'light') {
     viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true,
     locale: 'de-DE', colorScheme: scheme,
   });
-  await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: BASE });
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write', 'geolocation', 'microphone'], { origin: BASE });
+  await ctx.setGeolocation({ latitude: 52.520008, longitude: 13.404954, accuracy: 20 });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push(`${label} pageerror: ${e.message}`));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(`${label} console: ${m.text()}`); });
@@ -76,7 +77,7 @@ async function register(page, national, e164, name, prefix) {
 }
 
 (async () => {
-  const browser = await chromium.launch();
+  const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
   const a = await phone(browser, 'A');
   const b = await phone(browser, 'B', 'dark');
 
@@ -138,6 +139,52 @@ async function register(page, national, e164, name, prefix) {
   await a.locator('.stack-item.top .bubble', { hasText: 'Yes, every word.' }).locator('.quote').waitFor({ timeout: 15000 });
   await sleep(500);
   await shot(a, 'a-07b-reactions-reply');
+
+  // ---- Attachments, all end-to-end encrypted
+  const PHOTO = path.join(__dirname, '..', 'client', 'public', 'icons', 'icon-512.png');
+  const attach = async (page, label) => {
+    await page.getByRole('button', { name: /Share photo, video, location/ }).click();
+    await page.locator('.attach-option', { hasText: label }).waitFor();
+    await sleep(300);
+  };
+  // Photo
+  await attach(a, 'Photo or video');
+  const [chooser] = await Promise.all([a.waitForEvent('filechooser'), a.locator('.attach-option', { hasText: 'Photo or video' }).click()]);
+  await chooser.setFiles(PHOTO);
+  await b.locator('.stack-item.top .visual img').last().waitFor({ timeout: 20000 });
+  // View-once photo
+  await attach(a, 'View once');
+  const [chooser2] = await Promise.all([a.waitForEvent('filechooser'), a.locator('.attach-option', { hasText: 'View once' }).click()]);
+  await chooser2.setFiles(PHOTO);
+  await b.locator('.stack-item.top .view-once', { hasText: 'Tap to view once' }).waitFor({ timeout: 20000 });
+  await b.locator('.stack-item.top .view-once', { hasText: 'Tap to view once' }).click();
+  await b.locator('.viewer img').waitFor({ timeout: 15000 });
+  await sleep(400);
+  await shot(b, 'b-06-view-once');
+  await b.getByRole('button', { name: 'Close' }).click();
+  await b.locator('.stack-item.top .view-once.opened').waitFor();
+  await a.locator('.stack-item.top .view-once.opened').waitFor({ timeout: 15000 });
+  // Location
+  await attach(a, 'Location');
+  await a.locator('.attach-option', { hasText: 'Location' }).click();
+  await b.locator('.stack-item.top .location-card').waitFor({ timeout: 20000 });
+  // Contact card
+  await attach(a, 'Contact');
+  await a.locator('.attach-option', { hasText: 'Contact' }).click();
+  await a.getByLabel('Name', { exact: true }).fill('Carla Test');
+  await a.locator('.sheet-layer').last().getByLabel('Phone number').fill('0151 23456789');
+  await a.getByRole('button', { name: 'Share', exact: true }).click();
+  await b.locator('.stack-item.top .contact-card', { hasText: 'Carla Test' }).waitFor({ timeout: 20000 });
+  // Voice message (fake microphone)
+  await a.getByRole('button', { name: 'Record voice message' }).click();
+  await a.locator('.recorder').waitFor();
+  await sleep(2300);
+  await a.getByRole('button', { name: 'Send voice message' }).click();
+  await b.locator('.stack-item.top .voice').waitFor({ timeout: 20000 });
+  await b.locator('.stack-item.top .voice-play').last().click();
+  await sleep(800);
+  await shot(b, 'b-07-attachments');
+  await shot(a, 'a-07c-attachments');
 
   // Edge swipe from the left goes back to the chat list
   await a.mouse.move(4, 420);
@@ -211,6 +258,19 @@ async function register(page, national, e164, name, prefix) {
   await shot(b, 'b-03-group');
   await a.locator('.stack-item.top .bubble-text', { hasText: 'Me! 🙋' }).waitFor({ timeout: 10000 });
   await shot(a, 'a-13-group');
+
+  // Poll in the group
+  await a.getByRole('button', { name: /Share photo, video, location/ }).click();
+  await a.locator('.attach-option', { hasText: 'Poll' }).click();
+  await a.getByLabel('Question').fill('Where do we meet?');
+  await a.getByLabel('Option 1').fill('Station');
+  await a.getByLabel('Option 2').fill('Café');
+  await a.getByRole('button', { name: 'Send', exact: true }).click();
+  await b.locator('.stack-item.top .poll-option', { hasText: 'Café' }).waitFor({ timeout: 20000 });
+  await b.locator('.stack-item.top .poll-option', { hasText: 'Café' }).click();
+  await a.locator('.stack-item.top .poll-foot', { hasText: '1 vote' }).waitFor({ timeout: 20000 });
+  await sleep(400);
+  await shot(a, 'a-13b-poll');
 
   // Group info
   await a.getByRole('button', { name: /Weekend trip, show info/ }).click();

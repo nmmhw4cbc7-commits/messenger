@@ -89,28 +89,101 @@ export interface Envelope {
   keys: Record<string, { kv: number; iv: string; k: string }>;
 }
 
+export interface MediaPayload {
+  kind: 'image' | 'video' | 'voice';
+  path: string;
+  key: string;
+  iv: string;
+  mime: string;
+  size: number;
+  w?: number;
+  h?: number;
+  duration?: number;
+  thumb?: string;
+  wave?: number[];
+  caption?: string;
+  viewOnce?: boolean;
+}
+
 export type Payload =
   | { type: 'text'; text: string; reply?: { id: string; senderId: string; text: string } }
-  | { type: 'reaction'; target: string; emoji: string };
+  | { type: 'reaction'; target: string; emoji: string }
+  | { type: 'media'; media: MediaPayload; reply?: { id: string; senderId: string; text: string } }
+  | { type: 'location'; lat: number; lng: number; acc?: number }
+  | { type: 'contact'; name: string; phone: string }
+  | { type: 'poll'; question: string; options: string[]; multi: boolean }
+  | { type: 'vote'; target: string; choices: number[] }
+  | { type: 'opened'; target: string };
 
 const ID = /^[A-Za-z0-9_-]{16,40}$/;
+const B64 = /^[A-Za-z0-9_-]+$/;
+const str = (v: unknown, max: number) => typeof v === 'string' && v.length <= max;
+const num = (v: unknown, min: number, max: number) => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
+
+function cleanReply(r: unknown) {
+  const o = r as Record<string, unknown> | undefined;
+  if (o && typeof o.id === 'string' && ID.test(o.id) && typeof o.senderId === 'string' && ID.test(o.senderId) && typeof o.text === 'string') {
+    return { id: o.id, senderId: o.senderId, text: o.text.slice(0, 200) };
+  }
+  return undefined;
+}
+
+function cleanMedia(m: unknown): MediaPayload | null {
+  const o = m as Record<string, unknown> | undefined;
+  if (!o || !['image', 'video', 'voice'].includes(o.kind as string)) return null;
+  if (!str(o.path, 90) || !/^[A-Za-z0-9_-]{16,40}\/[A-Za-z0-9_-]{16,40}$/.test(o.path as string)) return null;
+  if (!str(o.key, 64) || !B64.test(o.key as string) || !str(o.iv, 24) || !B64.test(o.iv as string)) return null;
+  // Only plain media types; never anything a browser could run.
+  if (!str(o.mime, 60) || !/^(image\/(jpeg|png|webp|gif)|video\/(mp4|quicktime|webm)|audio\/(mp4|webm|ogg|mpeg|aac)(;.*)?)$/.test(o.mime as string)) return null;
+  if (!num(o.size, 0, 30 * 1024 * 1024)) return null;
+  const out: MediaPayload = { kind: o.kind as MediaPayload['kind'], path: o.path as string, key: o.key as string, iv: o.iv as string, mime: o.mime as string, size: o.size as number };
+  if (num(o.w, 1, 20000)) out.w = o.w as number;
+  if (num(o.h, 1, 20000)) out.h = o.h as number;
+  if (num(o.duration, 0, 36000)) out.duration = o.duration as number;
+  if (str(o.thumb, 6000) && (o.thumb as string).startsWith('data:image/jpeg;base64,')) out.thumb = o.thumb as string;
+  if (Array.isArray(o.wave) && o.wave.length <= 64 && o.wave.every((v) => num(v, 0, 1))) out.wave = o.wave as number[];
+  if (str(o.caption, 2000) && o.caption) out.caption = o.caption as string;
+  if (o.viewOnce === true && o.kind === 'image') out.viewOnce = true;
+  return out;
+}
 
 /** Accept only well-formed payloads; anything else is treated as corrupt. */
 function cleanPayload(p: unknown): Payload | null {
   if (!p || typeof p !== 'object') return null;
   const o = p as Record<string, unknown>;
-  if (o.type === 'text' && typeof o.text === 'string') {
-    const out: Payload = { type: 'text', text: o.text.slice(0, 8000) };
-    const r = o.reply as Record<string, unknown> | undefined;
-    if (r && typeof r.id === 'string' && ID.test(r.id) && typeof r.senderId === 'string' && ID.test(r.senderId) && typeof r.text === 'string') {
-      out.reply = { id: r.id, senderId: r.senderId, text: r.text.slice(0, 200) };
+  switch (o.type) {
+    case 'text': {
+      if (typeof o.text !== 'string') return null;
+      const reply = cleanReply(o.reply);
+      return reply ? { type: 'text', text: o.text.slice(0, 8000), reply } : { type: 'text', text: o.text.slice(0, 8000) };
     }
-    return out;
+    case 'reaction':
+      return typeof o.target === 'string' && ID.test(o.target) && str(o.emoji, 16) ? { type: 'reaction', target: o.target, emoji: o.emoji as string } : null;
+    case 'media': {
+      const media = cleanMedia(o.media);
+      if (!media) return null;
+      const reply = cleanReply(o.reply);
+      return reply ? { type: 'media', media, reply } : { type: 'media', media };
+    }
+    case 'location':
+      return num(o.lat, -90, 90) && num(o.lng, -180, 180)
+        ? { type: 'location', lat: o.lat as number, lng: o.lng as number, ...(num(o.acc, 0, 1e6) ? { acc: o.acc as number } : {}) }
+        : null;
+    case 'contact':
+      return str(o.name, 80) && str(o.phone, 32) && /^\+[1-9]\d{6,15}$/.test(o.phone as string) ? { type: 'contact', name: (o.name as string) || (o.phone as string), phone: o.phone as string } : null;
+    case 'poll':
+      return str(o.question, 300) && o.question && Array.isArray(o.options) && o.options.length >= 2 && o.options.length <= 12 && o.options.every((x) => str(x, 100) && x)
+        ? { type: 'poll', question: o.question as string, options: o.options as string[], multi: o.multi === true }
+        : null;
+    case 'vote':
+      return typeof o.target === 'string' && ID.test(o.target) && Array.isArray(o.choices) && o.choices.length <= 12 && o.choices.every((c) => Number.isInteger(c) && c >= 0 && c < 12)
+        ? { type: 'vote', target: o.target, choices: o.choices as number[] }
+        : null;
+    case 'opened':
+      return typeof o.target === 'string' && ID.test(o.target) ? { type: 'opened', target: o.target } : null;
+    default:
+      return null;
   }
-  if (o.type === 'reaction' && typeof o.target === 'string' && ID.test(o.target) && typeof o.emoji === 'string' && o.emoji.length <= 16) {
-    return { type: 'reaction', target: o.target, emoji: o.emoji };
-  }
-  return null;
 }
 
 const header = (convId: string, senderId: string, msgId: string, ts: number) =>

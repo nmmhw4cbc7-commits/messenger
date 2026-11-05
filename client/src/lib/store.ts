@@ -1,3 +1,4 @@
+import type { MediaPayload } from './crypto';
 import { useEffect, useReducer, useRef } from 'preact/hooks';
 
 export interface Me {
@@ -48,13 +49,21 @@ export interface Msg {
   id: string;
   convId: string;
   senderId: string | null;
-  kind: 'text' | 'system' | 'notice' | 'undecryptable';
+  kind: 'text' | 'media' | 'location' | 'contact' | 'poll' | 'system' | 'notice' | 'undecryptable';
   text?: string;
   system?: SystemBody;
   notice?: { type: 'key_changed'; userId: string; name: string };
   reply?: ReplyRef;
   /** userId -> emoji */
   reactions?: Record<string, string>;
+  media?: MediaPayload;
+  location?: { lat: number; lng: number; acc?: number };
+  contactCard?: { name: string; phone: string };
+  poll?: { question: string; options: string[]; multi: boolean };
+  /** Poll votes: userId -> chosen option indexes */
+  votes?: Record<string, number[]>;
+  /** View-once photo: has it been opened (by me, or for my own: by the recipient)? */
+  opened?: boolean;
   createdAt: number;
   sortKey: number;
   status: 'pending' | 'sent' | 'failed' | 'received';

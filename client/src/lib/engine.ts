@@ -5,7 +5,8 @@ import { api, ApiError, sessionEvents } from './api';
 import * as idb from './idb';
 import { createIdentity, decryptMessage, encryptMessage, randomId, type Envelope, type Identity } from './crypto';
 import { getState, setState, type Conv, type Me, type Member, type Msg, type Pin, type Profile, type ReplyRef, type SystemBody, type Theme } from './store';
-import type { Payload } from './crypto';
+import type { Payload, MediaPayload } from './crypto';
+import { uploadMedia, storeLocalFile, forgetFile } from './media';
 
 let identity: Identity | null = null;
 const MAX_TEXT = 4000;
@@ -409,6 +410,7 @@ export async function clearChat(convId: string) {
 
 export async function deleteMessage(msg: Msg) {
   await idb.del('messages', msg.id);
+  if (msg.media) await forgetFile(msg.id);
   const list = (getState().messages[msg.convId] ?? []).filter((m) => m.id !== msg.id);
   setState((s) => ({ messages: { ...s.messages, [msg.convId]: list } }));
   const conv = getState().convs[msg.convId];
@@ -509,6 +511,71 @@ export async function sendText(convId: string, raw: string, reply?: ReplyRef) {
   flushOutbox();
 }
 
+async function queue(msg: Msg) {
+  await addMessages([msg], false);
+  await addToOutbox(msg.id);
+  flushOutbox();
+}
+
+function draft(convId: string, kind: Msg['kind']): Msg {
+  const now = Date.now();
+  return { id: randomId(), convId, senderId: getState().me!.id, kind, createdAt: now, sortKey: now, status: 'pending' };
+}
+
+/** Photos, videos and voice messages: stored locally first, uploaded when sending. */
+export async function sendMedia(convId: string, blob: Blob, meta: Omit<MediaPayload, 'path' | 'key' | 'iv' | 'size' | 'mime'>, reply?: ReplyRef) {
+  if (!getState().me) return;
+  const msg = draft(convId, 'media');
+  msg.media = { ...meta, mime: blob.type || 'application/octet-stream', size: blob.size, path: '', key: '', iv: '' };
+  if (reply) msg.reply = reply;
+  await storeLocalFile(msg.id, blob);
+  await queue(msg);
+}
+
+export async function sendLocation(convId: string, lat: number, lng: number, acc?: number) {
+  const msg = draft(convId, 'location');
+  msg.location = { lat: Math.round(lat * 1e6) / 1e6, lng: Math.round(lng * 1e6) / 1e6, ...(acc ? { acc: Math.round(acc) } : {}) };
+  await queue(msg);
+}
+
+export async function sendContact(convId: string, name: string, phone: string) {
+  const msg = draft(convId, 'contact');
+  msg.contactCard = { name: name.slice(0, 80), phone };
+  await queue(msg);
+}
+
+export async function sendPoll(convId: string, question: string, options: string[], multi: boolean) {
+  const msg = draft(convId, 'poll');
+  msg.poll = { question: question.slice(0, 300), options: options.map((o) => o.slice(0, 100)).slice(0, 12), multi };
+  msg.votes = {};
+  await queue(msg);
+}
+
+/** Vote in a poll (replaces earlier votes of this person). */
+export async function vote(msg: Msg, choices: number[]) {
+  const me = getState().me;
+  if (!me) return;
+  await applyVote(msg.id, me.id, choices);
+  await sendPayload(msg.convId, { type: 'vote', target: msg.id, choices });
+}
+
+async function applyVote(targetId: string, userId: string, choices: number[]) {
+  const msg = await idb.get<Msg>('messages', targetId);
+  if (!msg || msg.kind !== 'poll') return;
+  const votes = { ...(msg.votes ?? {}) };
+  if (choices.length) votes[userId] = [...new Set(choices)].filter((c) => c < (msg.poll?.options.length ?? 0));
+  else delete votes[userId];
+  await updateMessage({ ...msg, votes });
+}
+
+/** A view-once photo was looked at: delete it everywhere and tell the sender. */
+export async function markOpened(msg: Msg) {
+  if (msg.opened) return;
+  await forgetFile(msg.id, msg.media);
+  await updateMessage({ ...msg, opened: true, media: msg.media ? { ...msg.media, thumb: undefined } : undefined });
+  sendPayload(msg.convId, { type: 'opened', target: msg.id }).catch(() => {});
+}
+
 export async function retry(msg: Msg) {
   await updateMessage({ ...msg, status: 'pending' });
   await addToOutbox(msg.id);
@@ -554,6 +621,21 @@ export async function flushOutbox() {
   }
 }
 
+function payloadOf(msg: Msg): Payload {
+  switch (msg.kind) {
+    case 'media':
+      return msg.reply ? { type: 'media', media: msg.media!, reply: msg.reply } : { type: 'media', media: msg.media! };
+    case 'location':
+      return { type: 'location', ...msg.location! };
+    case 'contact':
+      return { type: 'contact', ...msg.contactCard! };
+    case 'poll':
+      return { type: 'poll', ...msg.poll! };
+    default:
+      return msg.reply ? { type: 'text', text: msg.text ?? '', reply: msg.reply } : { type: 'text', text: msg.text ?? '' };
+  }
+}
+
 async function deliver(msg: Msg): Promise<'sent' | 'failed' | 'offline' | 'paused'> {
   const me = getState().me;
   if (!me || !identity) return 'offline';
@@ -566,13 +648,25 @@ async function deliver(msg: Msg): Promise<'sent' | 'failed' | 'offline' | 'pause
     const others = conv.members.filter((m) => m.id !== me.id);
     if (others.some((m) => getState().pins[m.id]?.needsAck)) return 'paused';
     try {
-      const payload: Payload = msg.reply ? { type: 'text', text: msg.text ?? '', reply: msg.reply } : { type: 'text', text: msg.text ?? '' };
+      if (msg.kind === 'media' && msg.media && !msg.media.path) {
+        const blob = await idb.get<Blob>('files', msg.id);
+        if (!blob) throw new Error('The file is no longer on this device.');
+        const { path: _p, key: _k, iv: _i, size: _s, ...meta } = msg.media;
+        void _p; void _k; void _i; void _s;
+        const media = await uploadMedia(conv.id, blob, meta);
+        msg = { ...msg, media };
+        await idb.put('messages', msg);
+        // A view-once photo is not kept on the sender's phone either.
+        if (media.viewOnce) await idb.del('files', msg.id);
+      }
+      const payload = payloadOf(msg);
       const envelope = await encryptMessage(identity, me.id, conv.id, msg.id, payload,
         others.map((m) => ({ id: m.id, encPub: m.encPub, keyVersion: m.keyVersion })));
       const res = await api<{ id: string; createdAt: number }>('POST', `/api/conversations/${conv.id}/messages`, { id: msg.id, envelope });
       await updateMessage({ ...msg, status: 'sent', createdAt: res.createdAt });
       return 'sent';
     } catch (err) {
+      if (err instanceof TypeError) return 'offline'; // network failure during upload
       if (err instanceof ApiError) {
         if (err.status === 0 || err.status >= 500 || err.status === 429) return 'offline';
         if (err.status === 401) return 'offline';
@@ -714,6 +808,8 @@ async function processBatch(batch: SyncMessage[]) {
 
   const out: Msg[] = [];
   const reactions: { target: string; userId: string; emoji: string }[] = [];
+  const votes: { target: string; userId: string; choices: number[] }[] = [];
+  const opened: { target: string; userId: string }[] = [];
   for (const m of batch) {
     if (await idb.get('messages', m.id)) continue;
 
@@ -739,10 +835,22 @@ async function processBatch(batch: SyncMessage[]) {
       reactions.push({ target: result.payload.target, userId: m.senderId!, emoji: result.payload.emoji });
       continue;
     }
-    if (result.ok && result.payload.type === 'text') {
-      const msg: Msg = { id: m.id, convId: m.conversationId, senderId: m.senderId, kind: 'text', text: result.payload.text, createdAt: m.createdAt, sortKey: m.createdAt, status: 'received' };
-      if (result.payload.reply) msg.reply = result.payload.reply;
-      out.push(msg);
+    if (result.ok && result.payload.type === 'vote') {
+      votes.push({ target: result.payload.target, userId: m.senderId!, choices: result.payload.choices });
+      continue;
+    }
+    if (result.ok && result.payload.type === 'opened') {
+      opened.push({ target: result.payload.target, userId: m.senderId! });
+      continue;
+    }
+    if (result.ok) {
+      const p = result.payload;
+      const base = { id: m.id, convId: m.conversationId, senderId: m.senderId, createdAt: m.createdAt, sortKey: m.createdAt, status: 'received' as const };
+      if (p.type === 'text') out.push({ ...base, kind: 'text', text: p.text, ...(p.reply ? { reply: p.reply } : {}) });
+      else if (p.type === 'media') out.push({ ...base, kind: 'media', media: p.media, ...(p.reply ? { reply: p.reply } : {}) });
+      else if (p.type === 'location') out.push({ ...base, kind: 'location', location: { lat: p.lat, lng: p.lng, acc: p.acc } });
+      else if (p.type === 'contact') out.push({ ...base, kind: 'contact', contactCard: { name: p.name, phone: p.phone } });
+      else if (p.type === 'poll') out.push({ ...base, kind: 'poll', poll: { question: p.question, options: p.options, multi: p.multi }, votes: {} });
     } else {
       out.push({ id: m.id, convId: m.conversationId, senderId: m.senderId, kind: 'undecryptable', createdAt: m.createdAt, sortKey: m.createdAt, status: 'received' });
     }
@@ -751,6 +859,14 @@ async function processBatch(batch: SyncMessage[]) {
   if (refreshAfter) await refreshConversations().catch(() => {});
   await addMessages(out, true);
   for (const r of reactions) await applyReaction(r.target, r.userId, r.emoji);
+  for (const v of votes) await applyVote(v.target, v.userId, v.choices);
+  for (const o of opened) {
+    const target = await idb.get<Msg>('messages', o.target);
+    if (target && target.senderId === me.id && target.media?.viewOnce) {
+      await forgetFile(target.id);
+      await updateMessage({ ...target, opened: true });
+    }
+  }
 }
 
 // ------------------------------------------------------------------ realtime
@@ -935,6 +1051,29 @@ export async function forgetDevice() {
 
 export function myPublicKeys() {
   return identity ? { encPub: identity.encPub, sigPub: identity.sigPub } : null;
+}
+
+/** One-line summary of a message for chat lists and notifications. */
+export function summarize(m: Pick<Msg, 'kind' | 'text' | 'media' | 'contactCard' | 'poll'>): string {
+  switch (m.kind) {
+    case 'media':
+      if (m.media?.viewOnce) return 'Photo · view once';
+      if (m.media?.kind === 'voice') return `Voice message${m.media.duration ? ` · ${formatDuration(m.media.duration)}` : ''}`;
+      return (m.media?.kind === 'video' ? 'Video' : 'Photo') + (m.media?.caption ? ` · ${m.media.caption}` : '');
+    case 'location':
+      return 'Location';
+    case 'contact':
+      return `Contact · ${m.contactCard?.name ?? ''}`;
+    case 'poll':
+      return `Poll · ${m.poll?.question ?? ''}`;
+    default:
+      return m.text ?? '';
+  }
+}
+
+export function formatDuration(sec: number) {
+  const s = Math.max(0, Math.round(sec));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
 export function displayName(p: { id?: string; name?: string; phone?: string } | null | undefined) {

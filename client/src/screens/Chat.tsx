@@ -3,8 +3,9 @@ import type { JSX } from 'preact';
 import { useStore, type Conv, type Msg, type ReplyRef } from '../lib/store';
 import {
   avatarUrl, convTitle, displayName, loadMessages, otherMember, sendText, setOpenConv, retry, deleteMessage, acceptKeyChange,
-  react, isReadByAll,
+  react, isReadByAll, summarize,
 } from '../lib/engine';
+import { MediaView, LocationCard, ContactCard, PollCard, VoiceRecorder, openAttachSheet, Mic, Plus } from './Attachments';
 import { formatDay, formatTime, sameDay } from '../lib/format';
 import { Avatar, toast } from '../ui/components';
 import { goBack, useNav } from '../ui/nav';
@@ -60,8 +61,8 @@ export function ChatScreen({ convId }: { convId: string }) {
   else if (conv.kind === 'direct' && !other) blockedReason = 'This account has been deleted.';
 
   const startReply = (msg: Msg) => {
-    if (msg.kind !== 'text' || blockedReason) return;
-    setReplyTo({ id: msg.id, senderId: msg.senderId ?? '', text: (msg.text ?? '').slice(0, 200) });
+    if (msg.kind === 'undecryptable' || msg.status === 'pending' || blockedReason) return;
+    setReplyTo({ id: msg.id, senderId: msg.senderId ?? '', text: summarize(msg).slice(0, 200) });
     haptic(10);
     requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus());
   };
@@ -109,7 +110,7 @@ export function ChatScreen({ convId }: { convId: string }) {
       {blockedReason ? (
         <div class="composer composer-disabled"><p>{blockedReason}</p></div>
       ) : (
-        <Composer convId={conv.id} paused={changed.length > 0} replyTo={replyTo} replyName={replyTo ? nameOf(replyTo.senderId) : ''} onCancelReply={() => setReplyTo(null)} />
+        <Composer conv={conv} paused={changed.length > 0} replyTo={replyTo} replyName={replyTo ? nameOf(replyTo.senderId) : ''} onCancelReply={() => setReplyTo(null)} />
       )}
 
       {menu && (
@@ -168,7 +169,7 @@ function MessageList({ conv, messages, meId, onNotice, onReply, onMenu, nameOf }
         );
         continue;
       }
-      const bubbleLike = (x?: Msg) => x && (x.kind === 'text' || x.kind === 'undecryptable');
+      const bubbleLike = (x?: Msg) => x && x.kind !== 'system' && x.kind !== 'notice';
       const joinsPrev = bubbleLike(prev) && prev!.senderId === m.senderId && m.createdAt - prev!.createdAt < GROUP_GAP && sameDay(prev!.createdAt, m.createdAt);
       const joinsNext = bubbleLike(next) && next!.senderId === m.senderId && next!.createdAt - m.createdAt < GROUP_GAP && sameDay(next!.createdAt, m.createdAt);
       out.push(
@@ -268,7 +269,7 @@ function Bubble({ msg, conv, meId, first, last, onReply, onMenu, nameOf }: {
       if (mode === 'pending') {
         if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
         clearTimeout(timer);
-        if (mx > 0 && Math.abs(mx) > Math.abs(my) * 1.2 && msg.kind === 'text') {
+        if (mx > 0 && Math.abs(mx) > Math.abs(my) * 1.2 && msg.kind !== 'undecryptable' && msg.status !== 'pending') {
           mode = 'swipe';
           row.classList.add('swiping');
         } else {
@@ -330,7 +331,7 @@ function Bubble({ msg, conv, meId, first, last, onReply, onMenu, nameOf }: {
         <div class="bubble-col">
           <div
             ref={bubbleRef}
-            class={`bubble${msg.kind === 'undecryptable' ? ' undecryptable' : ''}${msg.status === 'failed' ? ' failed' : ''}`}
+            class={`bubble kind-${msg.kind}${msg.media ? ` media-${msg.media.viewOnce ? 'once' : msg.media.kind}` : ''}${msg.kind === 'undecryptable' ? ' undecryptable' : ''}${msg.status === 'failed' ? ' failed' : ''}`}
             onClick={() => msg.status === 'failed' && openMenu()}
           >
             {showSender && <span class="bubble-sender">{senderName}</span>}
@@ -342,9 +343,18 @@ function Bubble({ msg, conv, meId, first, last, onReply, onMenu, nameOf }: {
             )}
             {msg.kind === 'undecryptable' ? (
               <span class="bubble-text"><Lock size={14} class="inline-icon" /> This message could not be decrypted on this device.</span>
+            ) : msg.kind === 'media' ? (
+              <MediaView msg={msg} meId={meId} />
+            ) : msg.kind === 'location' ? (
+              <LocationCard msg={msg} />
+            ) : msg.kind === 'contact' ? (
+              <ContactCard msg={msg} meId={meId} />
+            ) : msg.kind === 'poll' ? (
+              <PollCard msg={msg} conv={conv} meId={meId} />
             ) : (
               <span class="bubble-text">{linkify(msg.text ?? '')}</span>
             )}
+            {msg.kind === 'media' && msg.media?.caption && <span class="bubble-text caption">{linkify(msg.media.caption)}</span>}
             {/* Floated after the text: sits on the last line when there is room, otherwise on its own line. Never overlaps. */}
             <span class="bubble-meta">
               {formatTime(msg.createdAt)}
@@ -373,6 +383,7 @@ function ContextMenu({ state, meId, canReply, onClose, onReply }: {
   onReply: () => void;
 }) {
   const { msg, rect, mine } = state;
+  const canReplyTo = msg.kind !== 'undecryptable' && msg.status !== 'pending';
   const [closing, setClosing] = useState(false);
   const mineReaction = msg.reactions?.[meId];
 
@@ -386,9 +397,9 @@ function ContextMenu({ state, meId, canReply, onClose, onReply }: {
 
   // Keep the bubble where it was, but make room for the reaction bar and actions.
   const vh = document.getElementById('app')?.clientHeight ?? window.innerHeight;
-  const hasBar = msg.kind === 'text' && msg.status !== 'pending' && msg.status !== 'failed';
+  const hasBar = msg.kind !== 'undecryptable' && msg.status !== 'pending' && msg.status !== 'failed';
   const barHeight = hasBar ? 58 : 0;
-  const actionCount = (msg.kind === 'text' && canReply ? 1 : 0) + (msg.kind === 'text' ? 1 : 0) + (msg.status === 'failed' ? 1 : 0) + 1;
+  const actionCount = (canReplyTo && canReply ? 1 : 0) + (msg.kind === 'text' ? 1 : 0) + (msg.status === 'failed' ? 1 : 0) + 1;
   const actionsHeight = 34 + 48 * actionCount + 8;
   const bubbleH = Math.min(rect.height, vh * 0.3);
   const safeTop = 56;
@@ -398,7 +409,7 @@ function ContextMenu({ state, meId, canReply, onClose, onReply }: {
   const side = mine ? { right: `${Math.max(10, window.innerWidth - rect.right)}px` } : { left: `${Math.max(10, rect.left)}px` };
 
   const actions: { label: string; icon: JSX.Element; danger?: boolean; run: () => void }[] = [];
-  if (msg.kind === 'text' && canReply) actions.push({ label: 'Reply', icon: <Reply size={19} />, run: onReply });
+  if (canReplyTo && canReply) actions.push({ label: 'Reply', icon: <Reply size={19} />, run: onReply });
   if (msg.kind === 'text') {
     actions.push({
       label: 'Copy',
@@ -419,7 +430,7 @@ function ContextMenu({ state, meId, canReply, onClose, onReply }: {
   return (
     <div class={`context-layer${closing ? ' closing' : ''}`} onClick={() => close()}>
       <div class="context-stack" style={{ top: `${top}px`, ...side }} onClick={(e) => e.stopPropagation()}>
-        {msg.kind === 'text' && msg.status !== 'pending' && msg.status !== 'failed' && (
+        {hasBar && (
           <div class={`reaction-bar ${mine ? 'out' : 'in'}`}>
             {REACTIONS.map((emoji) => (
               <button
@@ -434,7 +445,7 @@ function ContextMenu({ state, meId, canReply, onClose, onReply }: {
           </div>
         )}
         <div class={`context-bubble ${mine ? 'out' : 'in'}`} style={{ maxHeight: `${bubbleH}px` }}>
-          {msg.kind === 'undecryptable' ? 'This message could not be decrypted on this device.' : msg.text}
+          {msg.kind === 'undecryptable' ? 'This message could not be decrypted on this device.' : summarize(msg)}
         </div>
         <div class={`context-actions ${mine ? 'out' : 'in'}`}>
           <div class="context-time">{new Date(msg.createdAt).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</div>
@@ -452,14 +463,16 @@ function ContextMenu({ state, meId, canReply, onClose, onReply }: {
 
 // ------------------------------------------------------------------ composer
 
-function Composer({ convId, paused, replyTo, replyName, onCancelReply }: {
-  convId: string;
+function Composer({ conv, paused, replyTo, replyName, onCancelReply }: {
+  conv: Conv;
   paused: boolean;
   replyTo: ReplyRef | null;
   replyName: string;
   onCancelReply: () => void;
 }) {
+  const convId = conv.id;
   const [text, setText] = useState('');
+  const [recording, setRecording] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const draftKey = `draft:${convId}`;
 
@@ -495,6 +508,8 @@ function Composer({ convId, paused, replyTo, replyName, onCancelReply }: {
 
   const canSend = text.trim().length > 0 && !paused;
 
+  if (recording) return <div class="composer-wrap"><VoiceRecorder convId={convId} onDone={() => setRecording(false)} /></div>;
+
   return (
     <div class="composer-wrap">
       {replyTo && (
@@ -508,6 +523,9 @@ function Composer({ convId, paused, replyTo, replyName, onCancelReply }: {
         </div>
       )}
       <div class="composer">
+        <button class="composer-plus" aria-label="Share photo, video, location and more" disabled={paused} onClick={() => openAttachSheet(conv)}>
+          <Plus size={24} />
+        </button>
         <div class="composer-field">
           <textarea
             ref={ref}
@@ -528,16 +546,22 @@ function Composer({ convId, paused, replyTo, replyName, onCancelReply }: {
             }}
           />
         </div>
-        <button
-          class={`send-button${canSend ? ' ready' : ''}`}
-          aria-label="Send"
-          disabled={!canSend}
-          // Keep the keyboard open after sending.
-          onPointerDown={(e) => e.preventDefault()}
-          onClick={send}
-        >
-          <ArrowUp size={20} />
-        </button>
+        {canSend || !('MediaRecorder' in window) ? (
+          <button
+            class={`send-button${canSend ? ' ready' : ''}`}
+            aria-label="Send"
+            disabled={!canSend}
+            // Keep the keyboard open after sending.
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={send}
+          >
+            <ArrowUp size={20} />
+          </button>
+        ) : (
+          <button class="mic-button" aria-label="Record voice message" disabled={paused} onClick={() => setRecording(true)}>
+            <Mic />
+          </button>
+        )}
       </div>
     </div>
   );

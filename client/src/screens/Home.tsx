@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { getState, useStore, type Conv, type Msg } from '../lib/store';
-import { avatarUrl, convTitle, displayName, otherMember, deleteChat, markRead } from '../lib/engine';
+import { avatarUrl, convTitle, displayName, otherMember, deleteChat, markRead, summarize } from '../lib/engine';
 import { formatListTime } from '../lib/format';
 import { Avatar, Empty, NavButton, Screen, actionSheet, confirmAction } from '../ui/components';
 import { Chats, Compose, Gear, Lock, Search, Clock, Alert, Check, Trash } from '../ui/icons';
@@ -111,7 +111,7 @@ function preview(m: Msg | null, conv: Conv, meId: string | undefined) {
   if (m.kind === 'system') return describeSystem(m, conv, meId);
   if (m.kind === 'undecryptable') return 'Message could not be decrypted';
   const prefix = m.senderId === meId ? 'You: ' : conv.kind === 'group' ? `${displayName(conv.members.find((x) => x.id === m.senderId)).split(' ')[0]}: ` : '';
-  return prefix + (m.text ?? '').replace(/\s+/g, ' ');
+  return prefix + summarize(m).replace(/\s+/g, ' ');
 }
 
 // Only one row can be swiped open at a time.
