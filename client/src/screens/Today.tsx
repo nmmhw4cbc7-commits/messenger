@@ -4,16 +4,18 @@
 // place to talk about them.
 
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { getState, useStore, type Conv, type Member, type Msg } from '../lib/store';
+import { getState, useStore, type Activity, type Conv, type Member, type Msg } from '../lib/store';
 import {
-  addMembers, avatarUrl, createCircle, displayName, formatDuration, loadMessages, react, refreshCircle, sendMedia,
-  vlogPosts, vlogUsage, VLOG_LIMITS,
+  addMembers, avatarUrl, createCircle, createCircleInvite, displayName, formatDuration, joinCircle, loadMessages, markActivitySeen,
+  react, refreshCircle, sendMedia, vlogPosts, vlogUsage, VLOG_LIMITS,
 } from '../lib/engine';
+import { formatListTime } from '../lib/format';
+import { prettyPhone } from '../lib/phone';
 import { compressVideo, MAX_FILE, preparePhoto, prepareVideo } from '../lib/media';
 import { errorMessage } from '../lib/api';
-import { Avatar, Button, Screen, Spinner, toast, useAsync } from '../ui/components';
+import { Avatar, Button, NavButton, Screen, Spinner, actionSheet, toast, useAsync } from '../ui/components';
 import { getNav, useNav } from '../ui/nav';
-import { Camera, ChevronRight, PersonAdd, Chats as ChatIcon, Close } from '../ui/icons';
+import { Bell, Camera, ChevronRight, PersonAdd, Chats as ChatIcon, Close, Share, Copy } from '../ui/icons';
 import { PeoplePicker } from './NewChat';
 import { ChatScreen } from './Chat';
 import { openViewer, pickFile, useMediaUrl } from './Attachments';
@@ -25,6 +27,21 @@ export const VlogIcon = ({ size = 26 }: { size?: number }) => (
 );
 
 const SETUP_FLAG = 'haven-circle-intro';
+const JOIN_KEY = 'haven-join';
+const cleanCode = (v: string) => v.toUpperCase().replace(/[^A-Z2-9]/g, '').slice(0, 12);
+const prettyCode = (code: string) => code.replace(/(.{4})(?=.)/g, '$1 ');
+
+// An invite link (https://…/?join=CODE) is remembered until the user is signed in.
+(() => {
+  const params = new URLSearchParams(location.search);
+  const code = params.get('join');
+  if (!code) return;
+  try { localStorage.setItem(JOIN_KEY, cleanCode(code)); } catch { /* private mode */ }
+  params.delete('join');
+  history.replaceState(history.state, '', location.pathname + (params.toString() ? `?${params}` : ''));
+})();
+const pendingJoin = () => { try { return localStorage.getItem(JOIN_KEY) || ''; } catch { return ''; } };
+const clearJoin = () => { try { localStorage.removeItem(JOIN_KEY); } catch { /* ignore */ } };
 /** Remember to offer the friend group setup right after creating a profile. */
 export const offerCircleSetup = () => { try { localStorage.setItem(SETUP_FLAG, '1'); } catch { /* private mode */ } };
 
@@ -50,20 +67,27 @@ export function TodayTab() {
   useEffect(() => { refreshCircle().catch(() => {}); }, []);
   useEffect(() => { if (circle?.id) loadMessages(circle.id); }, [circle?.id]);
 
-  // Right after sign-up: offer to set up the friend group once.
+  // Opened an invite link: join that friend group. Right after sign-up otherwise: offer the setup once.
   useEffect(() => {
-    if (!circle || circle.id) return;
+    if (!circle) return;
+    const code = pendingJoin();
     let flagged = false;
     try { flagged = localStorage.getItem(SETUP_FLAG) === '1'; localStorage.removeItem(SETUP_FLAG); } catch { /* ignore */ }
-    if (flagged) openCircleSetup();
+    if (code.length === 12) {
+      clearJoin();
+      if (circle.id) return;
+      joinCircle(code).then((c) => toast(`You joined “${c.title}”`), (err) => { toast(errorMessage(err), 'error'); openJoinSheet(code); });
+      return;
+    }
+    if (flagged && !circle.id) openCircleSetup();
   }, [circle?.id, circle === null]);
 
   if (!circle) {
-    return <Screen title="Vlog your Day" large><div class="center pad"><Spinner /></div></Screen>;
+    return <Screen title="Vlog your Day" large right={<BellButton />}><div class="center pad"><Spinner /></div></Screen>;
   }
   if (!circle.id || !conv) {
     return (
-      <Screen title="Vlog your Day" large>
+      <Screen title="Vlog your Day" large right={<BellButton />}>
         <div class="vlog-intro">
           <span class="vlog-intro-icon"><VlogIcon size={34} /></span>
           <h2>Your friends’ day, every day</h2>
@@ -74,6 +98,7 @@ export function TodayTab() {
             <li><span>03</span>Share your day, end-to-end encrypted</li>
           </ol>
           <Button onClick={openCircleSetup}>Choose friends</Button>
+          <Button variant="plain" onClick={() => openJoinSheet()}>I already have a friend group</Button>
         </div>
       </Screen>
     );
@@ -87,7 +112,7 @@ export function TodayTab() {
   const earlier = circle.picks.filter((p) => p.day !== today);
 
   return (
-    <Screen title="Vlog your Day" large>
+    <Screen title="Vlog your Day" large right={<BellButton />}>
       <p class="vlog-date">{new Date(`${today}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</p>
 
       {!pick ? (
@@ -433,13 +458,173 @@ function CircleSetup({ close }: { close: () => Promise<void> }) {
           <input class="field" type="text" maxLength={60} value={name} aria-label="Group name" placeholder="Group name" onInput={(e) => setName((e.target as HTMLInputElement).value)} />
           <Button onClick={() => setStep('pick')} disabled={!name.trim()}>Choose friends</Button>
           <p class="fine-print">Friends who aren’t on Haven yet can be invited by their number. You can add more people any time.</p>
+          <Button variant="plain" onClick={async () => { await close(); openJoinSheet(); }}>I already have a friend group</Button>
         </div>
       </div>
     </div>
   );
 }
 
+/** Invite: share a link, or add people you already chat with. */
 export function inviteToCircle(conv: Conv) {
+  actionSheet([
+    { label: 'Share invite link', run: () => getNav().present((close) => <InviteLinkSheet close={close} />, { variant: 'card' }) },
+    { label: 'Add from your contacts', run: () => addFromContacts(conv) },
+  ], { title: 'Invite friends' });
+}
+
+function InviteLinkSheet({ close }: { close: () => Promise<void> }) {
+  const [code, setCode] = useState('');
+  const [error, setError] = useState('');
+  useEffect(() => { createCircleInvite().then((r) => setCode(r.code), (err) => setError(errorMessage(err))); }, []);
+  const url = code ? `${location.origin}/?join=${code}` : '';
+  const text = `Join my friend group on Haven. Every day one of us vlogs their day. ${url}\nInvite code: ${prettyCode(code)}`;
+  const share = async () => {
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Haven', text }); return; } catch (err) { if ((err as Error).name === 'AbortError') return; }
+    }
+    copy();
+  };
+  const copy = () => navigator.clipboard.writeText(text).then(() => toast('Invite copied'), () => toast('Could not copy', 'error'));
+  return (
+    <div class="sheet-page">
+      <div class="sheet-header sheet-drag">
+        <span />
+        <strong>Invite link</strong>
+        <button class="nav-button bold" onClick={() => close()}>Done</button>
+      </div>
+      <div class="sheet-content">
+        <p class="muted">Anyone with this link or code can join your friend group for the next 14 days. Only send it to friends.</p>
+        <div class="invite-code-box">
+          {code ? <span class="pair-code">{prettyCode(code)}</span> : error ? <span class="form-error shown">{error}</span> : <Spinner />}
+        </div>
+        <Button onClick={share} disabled={!code}><Share size={19} /> Share invite link</Button>
+        <Button variant="secondary" onClick={copy} disabled={!code}><Copy size={19} /> Copy</Button>
+      </div>
+    </div>
+  );
+}
+
+export function openJoinSheet(initial = '') {
+  getNav().present((close) => <JoinSheet close={close} initial={initial} />, { variant: 'card' });
+}
+
+function JoinSheet({ close, initial }: { close: () => Promise<void>; initial: string }) {
+  const me = useStore((s) => s.me);
+  const [code, setCode] = useState(cleanCode(initial));
+  const [error, setError] = useState('');
+  const [busy, run] = useAsync();
+  const join = () => run(async () => {
+    const c = await joinCircle(code);
+    await close();
+    toast(`You joined “${c.title}”`);
+  }, (err) => setError(errorMessage(err)));
+  const shareNumber = async () => {
+    const text = `Add me to our friend group on Haven: ${prettyPhone(me?.phone ?? '')}`;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Haven', text }); return; } catch (err) { if ((err as Error).name === 'AbortError') return; }
+    }
+    navigator.clipboard.writeText(text).then(() => toast('Copied'), () => {});
+  };
+  return (
+    <div class="sheet-page">
+      <div class="sheet-header sheet-drag">
+        <button class="nav-button" onClick={() => close()}>Cancel</button>
+        <strong>Join a friend group</strong>
+        <button class="nav-button bold" onClick={join} disabled={code.length !== 12 || busy}>Join</button>
+      </div>
+      <div class="sheet-content">
+        <p class="muted">Got an invite link? Just open it. Or type the invite code a friend sent you.</p>
+        <input class="field mono-input center-text" placeholder="XXXX XXXX XXXX" aria-label="Invite code" maxLength={16} autoCapitalize="characters" autoComplete="off"
+          value={prettyCode(code)} onInput={(e) => { setCode(cleanCode((e.target as HTMLInputElement).value)); setError(''); }}
+          onKeyDown={(e) => e.key === 'Enter' && code.length === 12 && join()} />
+        <p class={`form-error${error ? ' shown' : ''}`} role="alert">{error}</p>
+        <Button onClick={join} loading={busy} disabled={code.length !== 12}>Join friend group</Button>
+        <div class="join-alt">
+          <p>No code? Someone in the group can also add you directly. Send them your number:</p>
+          <Button variant="secondary" onClick={shareNumber}><Share size={19} /> Share my number</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ notification center
+
+function BellButton() {
+  const unseen = useStore((s) => s.activity.some((a) => a.at > s.activitySeen));
+  return (
+    <NavButton onClick={openActivity} label={unseen ? 'Notifications, new' : 'Notifications'}>
+      <span class="bell-wrap"><Bell size={24} />{unseen && <span class="bell-dot" />}</span>
+    </NavButton>
+  );
+}
+
+export function openActivity() {
+  getNav().present((close) => <ActivitySheet close={close} />, { variant: 'full' });
+}
+
+function ActivitySheet({ close }: { close: () => Promise<void> }) {
+  const items = useStore((s) => s.activity);
+  const convs = useStore((s) => s.convs);
+  useStore((s) => s.aliases);
+  const seenBefore = useRef(getState().activitySeen);
+  useEffect(() => { markActivitySeen(); }, [items.length]);
+
+  const who = (a: Activity) => convs[a.convId]?.members.find((m) => m.id === a.userId);
+  const text = (a: Activity) => {
+    const name = displayName(who(a)) || 'Someone';
+    if (a.type === 'reaction') return <><strong>{name}</strong> reacted {a.emoji} to your {a.vlog ? 'vlog' : 'message'}</>;
+    if (a.type === 'vlog') return <><strong>{name}</strong> just vlogged</>;
+    return <><strong>{name}</strong> joined your friend group</>;
+  };
+  const open = async (a: Activity) => {
+    await close();
+    if (a.type === 'reaction' && !a.vlog && convs[a.convId]) getNav().push(<ChatScreen convId={a.convId} />);
+  };
+
+  return (
+    <div class="sheet-page">
+      <div class="sheet-header sheet-drag">
+        <span />
+        <strong>Notifications</strong>
+        <button class="nav-button bold" onClick={() => close()}>Done</button>
+      </div>
+      <div class="sheet-scroll">
+        {items.length ? (
+          <ul class="activity-list">
+            {items.map((a) => {
+              const p = who(a);
+              return (
+                <li key={a.id}>
+                  <button class={`activity-row${a.at > seenBefore.current ? ' new' : ''}`} onClick={() => open(a)}>
+                    <span class="activity-avatar">
+                      <Avatar id={a.userId} name={displayName(p) || '?'} src={p ? avatarUrl(p) : null} size={44} />
+                      <span class="activity-badge">{a.type === 'reaction' ? a.emoji : a.type === 'vlog' ? '🎬' : '👋'}</span>
+                    </span>
+                    <span class="activity-text">
+                      <span>{text(a)}</span>
+                      {a.type === 'reaction' && !a.vlog && a.snippet && <span class="activity-snippet">“{a.snippet}”</span>}
+                      <span class="activity-time">{formatListTime(a.at)}</span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <div class="activity-empty">
+            <span class="vlog-intro-icon"><Bell size={30} /></span>
+            <h2>No notifications yet</h2>
+            <p>When someone reacts to your messages or vlogs, or a friend posts their day, you’ll see it here.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function addFromContacts(conv: Conv) {
   getNav().present((close) => (
     <PeoplePicker
       title="Invite friends"

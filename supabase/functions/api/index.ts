@@ -1263,6 +1263,43 @@ route('POST', '/circle', async ({ req, reply, body }) => {
   return { conversation: await oneConversation(id, user.id), skipped };
 });
 
+// Invite links: anyone in a friend group can share one; it is valid for 14 days.
+route('POST', '/circle/invite', async ({ req, reply }) => {
+  const user = await currentUser(req, reply);
+  const convId = await circleOf(user.id);
+  if (!convId) throw new HttpError(400, 'no_circle', 'Create a friend group first.');
+  await enforce(`invite:${user.id}`, 30, HOUR);
+  const code = newLinkCode();
+  const t = now();
+  await sql`delete from haven.circle_invites where expires_at < ${t}`;
+  await sql`insert into haven.circle_invites (code_hash, conversation_id, created_by, expires_at, created_at)
+            values (${sha256(code)}, ${convId}, ${user.id}, ${t + 14 * DAY}, ${t})`;
+  return { code, expiresAt: t + 14 * DAY };
+});
+
+route('POST', '/circle/join', async ({ req, reply, body }) => {
+  const user = await currentUser(req, reply);
+  const { code } = shape<{ code: string }>(body, { code: [str(12, 12, LINK_CODE), true] });
+  await enforce(`join:${user.id}`, 20, HOUR);
+  const invalid = new HttpError(400, 'invite_invalid', 'This invite is not valid or has expired. Ask for a new one.');
+  const [inv] = await sql`select i.conversation_id, i.created_by from haven.circle_invites i join haven.conversations c on c.id = i.conversation_id and c.circle
+                          where i.code_hash = ${sha256(code)} and i.expires_at > ${now()}`;
+  if (!inv || (await hasBlocked(inv.created_by, user.id))) throw invalid;
+  const current = await memberIds(inv.conversation_id);
+  if (current.includes(user.id)) return { conversation: await oneConversation(inv.conversation_id, user.id) };
+  if (await circleOf(user.id)) throw new HttpError(409, 'already_in_circle', 'You are already in a friend group. Leave it first to join another one.');
+  if (!user.name) throw new HttpError(400, 'no_name', 'Add your name first.');
+  if (current.length >= MAX_GROUP) throw new HttpError(400, 'group_full', `Groups can have up to ${MAX_GROUP} members.`);
+  await sql.begin(async (tx) => {
+    await tx`insert into haven.members (conversation_id, user_id, role, joined_at) values (${inv.conversation_id}, ${user.id}, 'member', ${now()})`;
+    await systemEvent(tx, inv.conversation_id, { type: 'member_joined', actorId: user.id, names: await namesOf(tx, [user.id]) }, current);
+  });
+  await broadcast([...current, user.id], 'conversations');
+  await broadcast(current, 'sync');
+  await notifyUsers(current, `${user.name} joined your friend group 👋`, 'Say hi on the Today screen.', 'today');
+  return { conversation: await oneConversation(inv.conversation_id, user.id) };
+});
+
 // ---- messages
 
 route('POST', '/conversations/:id/messages', async ({ req, reply, params, body }) => {

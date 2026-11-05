@@ -47,6 +47,7 @@ export function Home() {
   }, []);
   const unread = useStore((s) => Object.values(s.convs).reduce((n, c) => n + (c.hidden ? 0 : c.unread), 0));
   const myTurn = useStore((s) => Boolean(s.circle?.id && s.me && s.circle.picks.some((p) => p.day === s.circle!.today && p.userId === s.me!.id)));
+  const unseenActivity = useStore((s) => s.activity.some((a) => a.at > s.activitySeen));
 
   return (
     <div class="home">
@@ -57,7 +58,7 @@ export function Home() {
         <button class={tab === 'today' ? 'active' : ''} onClick={() => setTab('today')} aria-current={tab === 'today'}>
           <span class="tab-icon">
             <VlogIcon size={26} />
-            {myTurn && <span class="tab-badge dot" />}
+            {(myTurn || unseenActivity) && <span class="tab-badge dot" />}
           </span>
           <span>Today</span>
         </button>

@@ -45,7 +45,7 @@ export interface ReplyRef {
 }
 
 export interface SystemBody {
-  type: 'group_created' | 'members_added' | 'member_removed' | 'member_left' | 'renamed';
+  type: 'group_created' | 'members_added' | 'member_removed' | 'member_left' | 'renamed' | 'member_joined';
   actorId: string;
   targetIds?: string[];
   title?: string;
@@ -129,6 +129,24 @@ export interface State {
   importing: 'none' | 'waiting' | 'importing';
   /** Vlog your Day: my friend group and who vlogs on which day. */
   circle: CircleState | null;
+  /** Notification center: reactions to my messages, new vlogs, people joining. Newest first. */
+  activity: Activity[];
+  /** Everything up to this time has been seen. */
+  activitySeen: number;
+}
+
+export interface Activity {
+  id: string;
+  type: 'reaction' | 'vlog' | 'joined';
+  convId: string;
+  userId: string;
+  msgId?: string;
+  emoji?: string;
+  /** The reaction was to a vlog post. */
+  vlog?: boolean;
+  /** Short preview of the message that got the reaction. */
+  snippet?: string;
+  at: number;
 }
 
 export interface CircleState {
@@ -154,6 +172,8 @@ let state: State = {
   pushPreview: true,
   importing: 'none',
   circle: null,
+  activity: [],
+  activitySeen: 0,
 };
 
 const listeners = new Set<() => void>();

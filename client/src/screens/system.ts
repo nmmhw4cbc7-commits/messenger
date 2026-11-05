@@ -28,6 +28,8 @@ export function describeSystem(m: Msg, conv: Conv, meId: string | undefined): st
       return `${actor} removed ${list(s.targetIds)}`;
     case 'member_left':
       return `${actor} left`;
+    case 'member_joined':
+      return s.actorId === meId ? 'You joined the group' : `${actor} joined with an invite link`;
     case 'renamed':
       return `${actor} renamed the group to “${s.title}”`;
     default:

@@ -4,7 +4,7 @@
 import { api, ApiError, sessionEvents } from './api';
 import * as idb from './idb';
 import { createIdentity, decryptMessage, encryptMessage, randomId, seal, unseal, toB64u, fromB64u, type Envelope, type Identity } from './crypto';
-import { getState, setState, type Conv, type DeviceKey, type Me, type Member, type Msg, type Pin, type Profile, type ReplyRef, type SystemBody, type Theme } from './store';
+import { getState, setState, type Activity, type Conv, type DeviceKey, type Me, type Member, type Msg, type Pin, type Profile, type ReplyRef, type SystemBody, type Theme } from './store';
 import type { Payload, MediaPayload } from './crypto';
 import { uploadMedia, storeLocalFile, forgetFile } from './media';
 
@@ -22,7 +22,9 @@ export async function boot() {
   const me = (await idb.get<Me>('meta', 'me')) ?? null;
   const aliases = (await idb.get<Record<string, string>>('meta', 'aliases').catch(() => undefined)) ?? {};
   const pushPreview = (await idb.get<boolean>('meta', 'pushPreview').catch(() => undefined)) ?? true;
-  setState({ aliases, pushPreview });
+  const activity = (await idb.get<Activity[]>('meta', 'activity').catch(() => undefined)) ?? [];
+  const activitySeen = (await idb.get<number>('meta', 'activitySeen').catch(() => undefined)) ?? 0;
+  setState({ aliases, pushPreview, activity, activitySeen });
   // Opening the app (also from a notification) clears what is already on the lock screen.
   clearNotifications();
   if (!identity || !me) {
@@ -898,6 +900,7 @@ async function processBatch(batch: SyncMessage[]) {
   if (refreshAfter) await refreshConversations().catch(() => {});
   await addMessages(out, true);
   for (const r of reactions) await applyReaction(r.target, r.userId, r.emoji);
+  await noteActivity(out, reactions, me.id);
   for (const v of votes) await applyVote(v.target, v.userId, v.choices);
   for (const o of opened) {
     const target = await idb.get<Msg>('messages', o.target);
@@ -1365,4 +1368,54 @@ export function vlogUsage(posts: Msg[]) {
   const videos = posts.filter((m) => m.media!.kind === 'video');
   const photos = posts.filter((m) => m.media!.kind === 'image');
   return { videos: videos.length, seconds: videos.reduce((n, m) => n + (m.media!.duration ?? 0), 0), photos: photos.length };
+}
+
+// ------------------------------------------------------------------ notification center
+
+const MAX_ACTIVITY = 100;
+
+/** Record what happened for the notification center: reactions to my messages, new vlogs, people joining. */
+async function noteActivity(msgs: Msg[], reactions: { target: string; userId: string; emoji: string }[], meId: string) {
+  const add: Activity[] = [];
+  const remove = new Set<string>();
+  const now = Date.now();
+  for (const r of reactions) {
+    if (r.userId === meId) continue;
+    const id = `r:${r.target}:${r.userId}`;
+    if (!r.emoji) { remove.add(id); continue; }
+    const target = await idb.get<Msg>('messages', r.target);
+    if (!target || target.senderId !== meId) continue;
+    add.push({ id, type: 'reaction', convId: target.convId, msgId: target.id, userId: r.userId, emoji: r.emoji, vlog: Boolean(target.media?.vlog), snippet: summarize(target).slice(0, 80), at: now });
+  }
+  for (const m of msgs) {
+    if (m.media?.vlog && m.senderId && m.senderId !== meId) {
+      add.push({ id: `v:${m.media.vlog}:${m.senderId}`, type: 'vlog', convId: m.convId, userId: m.senderId, at: m.createdAt });
+    } else if (m.kind === 'system' && m.system?.type === 'member_joined' && m.system.actorId !== meId) {
+      add.push({ id: `j:${m.id}`, type: 'joined', convId: m.convId, userId: m.system.actorId, at: m.createdAt });
+    }
+  }
+  if (!add.length && !remove.size) return;
+  const ids = new Set(add.map((a) => a.id));
+  const next = [...add.sort((a, b) => b.at - a.at), ...getState().activity.filter((a) => !ids.has(a.id) && !remove.has(a.id))].slice(0, MAX_ACTIVITY);
+  setState({ activity: next });
+  await idb.put('meta', next, 'activity').catch(() => {});
+}
+
+export async function markActivitySeen() {
+  const at = Date.now();
+  setState({ activitySeen: at });
+  await idb.put('meta', at, 'activitySeen').catch(() => {});
+}
+
+// ------------------------------------------------------------------ friend group invites
+
+export async function createCircleInvite() {
+  return api<{ code: string; expiresAt: number }>('POST', '/api/circle/invite', {});
+}
+
+export async function joinCircle(code: string) {
+  const res = await api<{ conversation: ServerConv }>('POST', '/api/circle/join', { code });
+  await upsertServerConv(res.conversation);
+  await refreshCircle();
+  return res.conversation;
 }

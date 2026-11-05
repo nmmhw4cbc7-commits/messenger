@@ -2411,3 +2411,24 @@ button.vlog-reaction:active { transform: scale(0.94); }
 .vlog-reaction.on { background: var(--ink); box-shadow: none; }
 .vlog-reaction.on em { color: var(--on-ink); }
 .vlog-reaction-names { font-size: 13px; color: var(--text-2); }
+
+/* Notification center */
+.bell-wrap { position: relative; display: inline-flex; }
+.bell-dot { position: absolute; top: 1px; right: 2px; width: 9px; height: 9px; border-radius: 50%; background: var(--signal); box-shadow: 0 0 0 2px var(--bg); }
+.activity-list { list-style: none; margin: 0; padding: 4px 0 24px; }
+.activity-row { display: flex; align-items: flex-start; gap: 12px; width: 100%; padding: 12px 18px; border: 0; background: none; color: var(--text); font: inherit; text-align: left; }
+.activity-row:active { background: var(--accent-soft); }
+.activity-row.new { background: rgba(255, 90, 31, 0.07); }
+.activity-avatar { position: relative; flex: none; }
+.activity-badge { position: absolute; right: -6px; bottom: -4px; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--bg-elevated); box-shadow: 0 0 0 2px var(--bg); font-size: 13px; }
+.activity-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; font-size: 15.5px; line-height: 1.35; }
+.activity-text strong { font-weight: 650; }
+.activity-snippet { color: var(--text-2); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity-time { font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.04em; color: var(--text-3); }
+.activity-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; padding: 56px 32px; }
+.activity-empty h2 { margin: 8px 0 0; font-size: 21px; font-weight: 700; letter-spacing: -0.02em; }
+.activity-empty p { margin: 0; color: var(--text-2); font-size: 15px; line-height: 1.45; max-width: 320px; }
+.invite-code-box { display: grid; place-items: center; min-height: 84px; border-radius: 16px; background: var(--bg-elevated); box-shadow: 0 0 0 0.5px var(--sep); }
+.invite-code-box .pair-code { margin: 0; }
+.join-alt { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
+.join-alt p { margin: 0; font-size: 14.5px; line-height: 1.45; color: var(--text-2); }
