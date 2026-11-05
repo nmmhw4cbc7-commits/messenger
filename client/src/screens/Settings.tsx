@@ -5,6 +5,7 @@ import {
   listBlocked, unblock, pushSupported, pushEnabled, enablePush, disablePush, displayName, setPushPreview,
 } from '../lib/engine';
 import { editAvatar } from '../ui/AvatarEditor';
+import { openPhoto } from '../ui/PhotoViewer';
 import { prettyPhone, toE164 } from '../lib/phone';
 import { parsePhoneNumberFromString } from 'libphonenumber-js/min';
 import { errorMessage } from '../lib/api';
@@ -81,6 +82,7 @@ function EditProfile() {
       return;
     }
     actionSheet([
+      { label: 'View photo', run: () => openPhoto(avatarUrl(me)!, me.name) },
       { label: 'Choose new photo', run: () => fileRef.current?.click() },
       { label: 'Remove photo', danger: true, run: () => runUpload(() => removeAvatar()) },
     ]);

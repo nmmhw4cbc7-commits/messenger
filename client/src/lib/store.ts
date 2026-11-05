@@ -71,6 +71,10 @@ export interface Msg {
   votes?: Record<string, number[]>;
   /** View-once photo: has it been opened (by me, or for my own: by the recipient)? */
   opened?: boolean;
+  /** Deleted for everyone by its sender; the content is gone. */
+  deleted?: boolean;
+  /** Last time the sender edited the text. */
+  editedAt?: number;
   createdAt: number;
   sortKey: number;
   status: 'pending' | 'sent' | 'failed' | 'received';

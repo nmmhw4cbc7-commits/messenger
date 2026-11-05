@@ -2432,3 +2432,17 @@ button.vlog-reaction:active { transform: scale(0.94); }
 .invite-code-box .pair-code { margin: 0; }
 .join-alt { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
 .join-alt p { margin: 0; font-size: 14.5px; line-height: 1.45; color: var(--text-2); }
+
+/* Profile photo, full screen */
+.photo-viewer { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #000; touch-action: none; transition: opacity 0.2s; }
+.photo-viewer img { max-width: 100%; max-height: 100%; object-fit: contain; user-select: none; -webkit-user-select: none; }
+.photo-viewer-top { position: absolute; top: 0; left: 0; right: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; padding: calc(var(--safe-top) + 10px) 12px 10px 20px; color: #fff; font-weight: 600; font-size: 17px; background: linear-gradient(rgba(0, 0, 0, 0.5), transparent); }
+.photo-viewer .viewer-close { position: static; }
+.avatar-zoom { border: 0; padding: 0; background: none; border-radius: 50%; }
+.avatar-zoom:active { opacity: 0.8; }
+
+/* Edited / deleted messages */
+.bubble-meta .edited { margin-right: 4px; font-style: italic; }
+.bubble-text.deleted { font-style: italic; opacity: 0.65; }
+.edit-field { min-height: 110px; resize: none; line-height: 1.4; }
+.vlog-delete { align-self: flex-start; font-size: 14px; color: var(--text-3); }

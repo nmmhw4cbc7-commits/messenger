@@ -2,14 +2,14 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import type { JSX } from 'preact';
 import { useStore, type Conv, type Msg, type ReplyRef } from '../lib/store';
 import {
-  avatarUrl, convTitle, displayName, loadMessages, otherMember, sendText, setOpenConv, retry, deleteMessage, acceptKeyChange,
+  avatarUrl, convTitle, displayName, loadMessages, otherMember, sendText, setOpenConv, retry, deleteMessage, deleteForEveryone, editMessage, acceptKeyChange,
   react, isReadByAll, summarize,
 } from '../lib/engine';
 import { MediaView, LocationCard, ContactCard, PollCard, VoiceRecorder, openAttachSheet, Mic, Plus } from './Attachments';
 import { formatDay, formatTime, sameDay } from '../lib/format';
-import { Avatar, toast } from '../ui/components';
-import { goBack, useNav } from '../ui/nav';
-import { ArrowUp, ChevronLeft, Clock, Alert, Check, CheckDouble, Lock, Reply, Close, Copy, Trash } from '../ui/icons';
+import { Avatar, Button, confirmAction, toast } from '../ui/components';
+import { getNav, goBack, useNav } from '../ui/nav';
+import { ArrowUp, ChevronLeft, Clock, Alert, Check, CheckDouble, Lock, Reply, Close, Copy, Trash, Pencil } from '../ui/icons';
 import { describeSystem } from './system';
 import { ContactInfo, GroupInfo, SafetyNumberScreen } from './Info';
 
@@ -271,7 +271,7 @@ function Bubble({ msg, conv, meId, first, last, onReply, onMenu, nameOf }: {
       if (mode === 'pending') {
         if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
         clearTimeout(timer);
-        if (mx > 0 && Math.abs(mx) > Math.abs(my) * 1.2 && msg.kind !== 'undecryptable' && msg.status !== 'pending') {
+        if (mx > 0 && Math.abs(mx) > Math.abs(my) * 1.2 && msg.kind !== 'undecryptable' && msg.status !== 'pending' && !msg.deleted) {
           mode = 'swipe';
           row.classList.add('swiping');
         } else {
@@ -343,7 +343,9 @@ function Bubble({ msg, conv, meId, first, last, onReply, onMenu, nameOf }: {
                 <span class="quote-text">{msg.reply.text}</span>
               </button>
             )}
-            {msg.kind === 'undecryptable' ? (
+            {msg.deleted ? (
+              <span class="bubble-text deleted"><Trash size={14} class="inline-icon" /> {mine ? 'You deleted this message' : 'This message was deleted'}</span>
+            ) : msg.kind === 'undecryptable' ? (
               <span class="bubble-text"><Lock size={14} class="inline-icon" /> This message could not be decrypted on this device.</span>
             ) : msg.kind === 'media' ? (
               <MediaView msg={msg} meId={meId} />
@@ -356,9 +358,10 @@ function Bubble({ msg, conv, meId, first, last, onReply, onMenu, nameOf }: {
             ) : (
               <span class="bubble-text">{linkify(msg.text ?? '')}</span>
             )}
-            {msg.kind === 'media' && msg.media?.caption && <span class="bubble-text caption">{linkify(msg.media.caption)}</span>}
+            {msg.kind === 'media' && !msg.deleted && msg.media?.caption && <span class="bubble-text caption">{linkify(msg.media.caption)}</span>}
             {/* Floated after the text: sits on the last line when there is room, otherwise on its own line. Never overlaps. */}
             <span class="bubble-meta">
+              {msg.editedAt && !msg.deleted ? <span class="edited">edited</span> : null}
               {formatTime(msg.createdAt)}
               {mine && <Ticks msg={msg} conv={conv} meId={meId} />}
             </span>
@@ -385,7 +388,8 @@ function ContextMenu({ state, meId, canReply, onClose, onReply }: {
   onReply: () => void;
 }) {
   const { msg, rect, mine } = state;
-  const canReplyTo = msg.kind !== 'undecryptable' && msg.status !== 'pending';
+  const canReplyTo = msg.kind !== 'undecryptable' && msg.status !== 'pending' && !msg.deleted;
+  const sent = mine && !msg.deleted && msg.status !== 'pending' && msg.status !== 'failed';
   const [closing, setClosing] = useState(false);
   const mineReaction = msg.reactions?.[meId];
 
@@ -399,9 +403,10 @@ function ContextMenu({ state, meId, canReply, onClose, onReply }: {
 
   // Keep the bubble where it was, but make room for the reaction bar and actions.
   const vh = document.getElementById('app')?.clientHeight ?? window.innerHeight;
-  const hasBar = msg.kind !== 'undecryptable' && msg.status !== 'pending' && msg.status !== 'failed';
+  const hasBar = msg.kind !== 'undecryptable' && msg.status !== 'pending' && msg.status !== 'failed' && !msg.deleted;
   const barHeight = hasBar ? 58 : 0;
-  const actionCount = (canReplyTo && canReply ? 1 : 0) + (msg.kind === 'text' ? 1 : 0) + (msg.status === 'failed' ? 1 : 0) + 1;
+  const canEdit = sent && msg.kind === 'text';
+  const actionCount = (canReplyTo && canReply ? 1 : 0) + (msg.kind === 'text' && !msg.deleted ? 1 : 0) + (canEdit ? 1 : 0) + (msg.status === 'failed' ? 1 : 0) + (sent ? 1 : 0) + 1;
   const actionsHeight = 34 + 48 * actionCount + 8;
   const bubbleH = Math.min(rect.height, vh * 0.3);
   const safeTop = 56;
@@ -412,7 +417,8 @@ function ContextMenu({ state, meId, canReply, onClose, onReply }: {
 
   const actions: { label: string; icon: JSX.Element; danger?: boolean; run: () => void }[] = [];
   if (canReplyTo && canReply) actions.push({ label: 'Reply', icon: <Reply size={19} />, run: onReply });
-  if (msg.kind === 'text') {
+  if (canEdit) actions.push({ label: 'Edit', icon: <Pencil size={19} />, run: () => openEditSheet(msg) });
+  if (msg.kind === 'text' && !msg.deleted) {
     actions.push({
       label: 'Copy',
       icon: <Copy size={19} />,
@@ -427,6 +433,18 @@ function ContextMenu({ state, meId, canReply, onClose, onReply }: {
     });
   }
   if (msg.status === 'failed') actions.push({ label: 'Try again', icon: <ArrowUp size={19} />, run: () => retry(msg) });
+  if (sent) {
+    actions.push({
+      label: 'Delete for everyone',
+      icon: <Trash size={19} />,
+      danger: true,
+      run: async () => {
+        if (await confirmAction({ title: 'Delete for everyone?', message: 'This message will be deleted for everyone in this chat.', confirm: 'Delete for everyone', danger: true })) {
+          deleteForEveryone(msg).catch((err) => toast(err instanceof Error ? err.message : 'Could not delete', 'error'));
+        }
+      },
+    });
+  }
   actions.push({ label: 'Delete for me', icon: <Trash size={19} />, danger: true, run: () => deleteMessage(msg) });
 
   return (
@@ -447,7 +465,7 @@ function ContextMenu({ state, meId, canReply, onClose, onReply }: {
           </div>
         )}
         <div class={`context-bubble ${mine ? 'out' : 'in'}`} style={{ maxHeight: `${bubbleH}px` }}>
-          {msg.kind === 'undecryptable' ? 'This message could not be decrypted on this device.' : summarize(msg)}
+          {msg.kind === 'undecryptable' ? 'This message could not be decrypted on this device.' : msg.deleted ? (mine ? 'You deleted this message' : 'This message was deleted') : summarize(msg)}
         </div>
         <div class={`context-actions ${mine ? 'out' : 'in'}`}>
           <div class="context-time">{new Date(msg.createdAt).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</div>
@@ -458,6 +476,51 @@ function ContextMenu({ state, meId, canReply, onClose, onReply }: {
             </button>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ edit
+
+function openEditSheet(msg: Msg) {
+  getNav().present((close) => <EditSheet msg={msg} close={close} />, { variant: 'card' });
+}
+
+function EditSheet({ msg, close }: { msg: Msg; close: () => Promise<void> }) {
+  const [text, setText] = useState(msg.text ?? '');
+  const [busy, setBusy] = useState(false);
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, []);
+  const changed = text.trim() && text.trim() !== msg.text;
+  const save = async () => {
+    if (!changed || busy) return;
+    setBusy(true);
+    try {
+      await editMessage(msg, text);
+      await close();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not edit', 'error');
+      setBusy(false);
+    }
+  };
+  return (
+    <div class="sheet-page">
+      <div class="sheet-header sheet-drag">
+        <button class="nav-button" onClick={() => close()}>Cancel</button>
+        <strong>Edit message</strong>
+        <button class="nav-button bold" onClick={save} disabled={!changed || busy}>Save</button>
+      </div>
+      <div class="sheet-content">
+        <textarea ref={ref} class="field edit-field" rows={4} maxLength={4000} value={text} aria-label="Message"
+          onInput={(e) => setText((e.target as HTMLTextAreaElement).value)} />
+        <Button onClick={save} loading={busy} disabled={!changed}>Save</Button>
+        <p class="fine-print">Everyone in the chat sees the new text, marked as edited.</p>
       </div>
     </div>
   );

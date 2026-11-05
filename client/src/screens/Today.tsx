@@ -6,14 +6,14 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { getState, useStore, type Activity, type Conv, type Member, type Msg } from '../lib/store';
 import {
-  addMembers, avatarUrl, createCircle, createCircleInvite, displayName, formatDuration, joinCircle, loadMessages, markActivitySeen,
+  addMembers, avatarUrl, createCircle, createCircleInvite, deleteForEveryone, displayName, formatDuration, joinCircle, loadMessages, markActivitySeen,
   react, refreshCircle, sendMedia, vlogPosts, vlogUsage, VLOG_LIMITS,
 } from '../lib/engine';
 import { formatListTime } from '../lib/format';
 import { prettyPhone } from '../lib/phone';
 import { compressVideo, MAX_FILE, preparePhoto, prepareVideo } from '../lib/media';
 import { errorMessage } from '../lib/api';
-import { Avatar, Button, NavButton, Screen, Spinner, actionSheet, toast, useAsync } from '../ui/components';
+import { Avatar, Button, NavButton, Screen, Spinner, actionSheet, confirmAction, toast, useAsync } from '../ui/components';
 import { getNav, useNav } from '../ui/nav';
 import { Bell, Camera, ChevronRight, PersonAdd, Chats as ChatIcon, Close, Share, Copy } from '../ui/icons';
 import { PeoplePicker } from './NewChat';
@@ -369,6 +369,7 @@ function Reactions({ msg }: { msg: Msg }) {
 
 function TimelineItem({ msg }: { msg: Msg }) {
   const media = msg.media!;
+  const mine = useStore((s) => s.me?.id === msg.senderId);
   const { url, error } = useMediaUrl(msg);
   const ratio = media.w && media.h ? Math.min(Math.max(media.h / media.w, 0.56), 1.25) : 1;
   return (
@@ -388,6 +389,13 @@ function TimelineItem({ msg }: { msg: Msg }) {
       </button>
       {media.caption && <p class="vlog-item-caption">{media.caption}</p>}
       {msg.status !== 'pending' && msg.status !== 'failed' && <Reactions msg={msg} />}
+      {mine && msg.status !== 'pending' && (
+        <button class="link-button vlog-delete" onClick={async () => {
+          if (await confirmAction({ title: 'Delete this post?', message: 'It will be removed for everyone in your friend group.', confirm: 'Delete', danger: true })) {
+            deleteForEveryone(msg).catch((err) => toast(errorMessage(err), 'error'));
+          }
+        }}>Delete post</button>
+      )}
     </li>
   );
 }

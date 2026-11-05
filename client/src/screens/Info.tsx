@@ -11,6 +11,7 @@ import { getNav, goBack, goBackMany, useNav } from '../ui/nav';
 import { Block, Key, PersonAdd, Pencil, Trash, Exit, Shield } from '../ui/icons';
 import { PeoplePicker } from './NewChat';
 import { ChatScreen } from './Chat';
+import { openPhoto } from '../ui/PhotoViewer';
 
 function VerifiedLabel({ userId }: { userId: string }) {
   const pin = useStore((s) => s.pins[userId]);
@@ -55,7 +56,13 @@ export function ContactInfo({ convId }: { convId: string }) {
   return (
     <Screen back title="" grouped>
       <div class="profile-hero">
-        <Avatar id={other?.id ?? conv.id} name={name} src={avatarUrl(other)} size={104} />
+        {other && avatarUrl(other) ? (
+          <button class="avatar-zoom" onClick={() => openPhoto(avatarUrl(other)!, name)} aria-label={`View ${name}’s photo`}>
+            <Avatar id={other.id} name={name} src={avatarUrl(other)} size={104} />
+          </button>
+        ) : (
+          <Avatar id={other?.id ?? conv.id} name={name} src={avatarUrl(other)} size={104} />
+        )}
         <h1>{name}</h1>
         {other && <p class="hero-sub">{prettyPhone(other.phone)}</p>}
         {alias && other?.name && <p class="hero-sub">Calls themselves “{other.name}”</p>}

@@ -847,6 +847,7 @@ async function processBatch(batch: SyncMessage[]) {
   const reactions: { target: string; userId: string; emoji: string }[] = [];
   const votes: { target: string; userId: string; choices: number[] }[] = [];
   const opened: { target: string; userId: string }[] = [];
+  const changes: { target: string; userId: string; text: string | null }[] = [];
   for (const m of batch) {
     if (await idb.get('messages', m.id)) continue;
 
@@ -876,6 +877,10 @@ async function processBatch(batch: SyncMessage[]) {
       reactions.push({ target: result.payload.target, userId: m.senderId!, emoji: result.payload.emoji });
       continue;
     }
+    if (result.ok && (result.payload.type === 'edit' || result.payload.type === 'delete')) {
+      changes.push({ target: result.payload.target, userId: m.senderId!, text: result.payload.type === 'edit' ? result.payload.text : null });
+      continue;
+    }
     if (result.ok && result.payload.type === 'vote') {
       votes.push({ target: result.payload.target, userId: m.senderId!, choices: result.payload.choices });
       continue;
@@ -900,6 +905,7 @@ async function processBatch(batch: SyncMessage[]) {
   if (refreshAfter) await refreshConversations().catch(() => {});
   await addMessages(out, true);
   for (const r of reactions) await applyReaction(r.target, r.userId, r.emoji);
+  for (const c of changes) await applyChange(c.target, c.userId, c.text);
   await noteActivity(out, reactions, me.id);
   for (const v of votes) await applyVote(v.target, v.userId, v.choices);
   for (const o of opened) {
@@ -1281,7 +1287,8 @@ export async function refreshMe() {
 }
 
 /** One-line summary of a message for chat lists and notifications. */
-export function summarize(m: Pick<Msg, 'kind' | 'text' | 'media' | 'contactCard' | 'poll'>): string {
+export function summarize(m: Pick<Msg, 'kind' | 'text' | 'media' | 'contactCard' | 'poll'> & { deleted?: boolean }): string {
+  if (m.deleted) return 'This message was deleted';
   switch (m.kind) {
     case 'media':
       if (m.media?.viewOnce) return 'Photo · view once';
@@ -1361,7 +1368,7 @@ export const VLOG_LIMITS = { videos: 3, seconds: 6 * 60, photos: 6 };
 
 /** What the picked person has posted on a day. */
 export function vlogPosts(list: Msg[] | undefined, day: string, userId: string | undefined) {
-  return (list ?? []).filter((m) => m.kind === 'media' && m.media?.vlog === day && m.senderId === userId);
+  return (list ?? []).filter((m) => m.kind === 'media' && !m.deleted && m.media?.vlog === day && m.senderId === userId);
 }
 
 export function vlogUsage(posts: Msg[]) {
@@ -1418,4 +1425,43 @@ export async function joinCircle(code: string) {
   await upsertServerConv(res.conversation);
   await refreshCircle();
   return res.conversation;
+}
+
+// ------------------------------------------------------------------ edit and delete for everyone
+
+/** Only the sender can change a message; the change is an end-to-end encrypted, signed control message. */
+async function applyChange(targetId: string, userId: string, text: string | null) {
+  const msg = await idb.get<Msg>('messages', targetId);
+  if (!msg || msg.senderId !== userId || msg.deleted) return;
+  if (text === null) {
+    if (msg.media) await forgetFile(msg.id);
+    await updateMessage(deletedCopy(msg));
+  } else if (msg.kind === 'text') {
+    await updateMessage({ ...msg, text, editedAt: Date.now() });
+  }
+}
+
+function deletedCopy(msg: Msg): Msg {
+  const { text: _t, media: _m, location: _l, contactCard: _c, poll: _p, votes: _v, reactions: _r, reply: _q, ...rest } = msg;
+  void _t; void _m; void _l; void _c; void _p; void _v; void _r; void _q;
+  return { ...rest, deleted: true };
+}
+
+export async function editMessage(msg: Msg, text: string) {
+  const me = getState().me;
+  const clean = text.trim();
+  if (!me || msg.senderId !== me.id || msg.kind !== 'text' || msg.deleted || !clean || clean === msg.text) return;
+  // Nobody is notified about an edit; the chat just updates.
+  await sendPayload(msg.convId, { type: 'edit', target: msg.id, text: clean }, { pushTo: [] });
+  await updateMessage({ ...msg, text: clean, editedAt: Date.now() });
+}
+
+export async function deleteForEveryone(msg: Msg) {
+  const me = getState().me;
+  if (!me || msg.senderId !== me.id || msg.deleted) return;
+  await sendPayload(msg.convId, { type: 'delete', target: msg.id }, { pushTo: [] });
+  const path = msg.media?.path;
+  if (msg.media) await forgetFile(msg.id);
+  await updateMessage(deletedCopy(msg));
+  if (path) api('POST', '/api/attachments/delete', { path }).catch(() => {});
 }

@@ -115,7 +115,9 @@ export type Payload =
   | { type: 'contact'; name: string; phone: string }
   | { type: 'poll'; question: string; options: string[]; multi: boolean }
   | { type: 'vote'; target: string; choices: number[] }
-  | { type: 'opened'; target: string };
+  | { type: 'opened'; target: string }
+  | { type: 'edit'; target: string; text: string }
+  | { type: 'delete'; target: string };
 
 const ID = /^[A-Za-z0-9_-]{16,40}$/;
 const B64 = /^[A-Za-z0-9_-]+$/;
@@ -184,6 +186,11 @@ function cleanPayload(p: unknown): Payload | null {
         : null;
     case 'opened':
       return typeof o.target === 'string' && ID.test(o.target) ? { type: 'opened', target: o.target } : null;
+    case 'edit':
+      return typeof o.target === 'string' && ID.test(o.target) && typeof o.text === 'string' && o.text.trim()
+        ? { type: 'edit', target: o.target, text: o.text.slice(0, 8000) } : null;
+    case 'delete':
+      return typeof o.target === 'string' && ID.test(o.target) ? { type: 'delete', target: o.target } : null;
     default:
       return null;
   }
