@@ -13,7 +13,7 @@ import { formatListTime } from '../lib/format';
 import { prettyPhone } from '../lib/phone';
 import { compressVideo, MAX_FILE, preparePhoto, prepareVideo } from '../lib/media';
 import { errorMessage } from '../lib/api';
-import { Avatar, Button, NavButton, Screen, Spinner, actionSheet, confirmAction, toast, useAsync } from '../ui/components';
+import { Avatar, Button, Screen, Spinner, actionSheet, confirmAction, toast, useAsync } from '../ui/components';
 import { getNav, useNav } from '../ui/nav';
 import { Bell, Camera, ChevronRight, PersonAdd, Chats as ChatIcon, Close, Share, Copy } from '../ui/icons';
 import { PeoplePicker } from './NewChat';
@@ -83,11 +83,12 @@ export function TodayTab() {
   }, [circle?.id, circle === null]);
 
   if (!circle) {
-    return <Screen title="Vlog your Day" large right={<BellButton />}><div class="center pad"><Spinner /></div></Screen>;
+    return <Screen title="Vlog your Day" large><div class="center pad"><Spinner /></div></Screen>;
   }
   if (!circle.id || !conv) {
     return (
-      <Screen title="Vlog your Day" large right={<BellButton />}>
+      <Screen title="Vlog your Day" large>
+        <TopLine today={circle.today} />
         <div class="vlog-intro">
           <span class="vlog-intro-icon"><VlogIcon size={34} /></span>
           <h2>Your friends’ day, every day</h2>
@@ -112,8 +113,8 @@ export function TodayTab() {
   const earlier = circle.picks.filter((p) => p.day !== today);
 
   return (
-    <Screen title="Vlog your Day" large right={<BellButton />}>
-      <p class="vlog-date">{new Date(`${today}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+    <Screen title="Vlog your Day" large>
+      <TopLine today={today} />
 
       {!pick ? (
         <div class="vlog-card">
@@ -559,12 +560,17 @@ function JoinSheet({ close, initial }: { close: () => Promise<void>; initial: st
 
 // ------------------------------------------------------------------ notification center
 
-function BellButton() {
+/** Date on the left, notifications on the right, right under the title. */
+function TopLine({ today }: { today: string }) {
   const unseen = useStore((s) => s.activity.some((a) => a.at > s.activitySeen));
   return (
-    <NavButton onClick={openActivity} label={unseen ? 'Notifications, new' : 'Notifications'}>
-      <span class="bell-wrap"><Bell size={24} />{unseen && <span class="bell-dot" />}</span>
-    </NavButton>
+    <div class="vlog-topline">
+      <p class="vlog-date">{new Date(`${today}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+      <button class={`bell-button${unseen ? ' unseen' : ''}`} onClick={openActivity} aria-label={unseen ? 'Notifications, new' : 'Notifications'}>
+        <Bell size={21} />
+        {unseen && <span class="bell-dot" />}
+      </button>
+    </div>
   );
 }
 

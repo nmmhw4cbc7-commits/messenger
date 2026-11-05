@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { useStore, type Profile, type Theme } from '../lib/store';
 import {
   avatarUrl, updateProfile, uploadAvatar, removeAvatar, setTheme, signOut, deleteAccount, setPin, removePin,
-  listBlocked, unblock, pushSupported, pushEnabled, enablePush, disablePush, displayName, setPushPreview,
+  listBlocked, unblock, pushSupported, pushEnabled, enablePush, turnOffPush, displayName, setPushPreview,
 } from '../lib/engine';
 import { editAvatar } from '../ui/AvatarEditor';
 import { openPhoto } from '../ui/PhotoViewer';
@@ -220,7 +220,7 @@ function Notifications() {
           right={enabled === null ? <Spinner /> : (
             <Toggle label="Message notifications" checked={enabled} disabled={!supported || busy} onChange={(v) => run(async () => {
               if (v) await enablePush();
-              else await disablePush();
+              else await turnOffPush();
               setEnabled(v);
             })} />
           )}

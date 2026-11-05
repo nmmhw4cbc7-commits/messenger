@@ -50,6 +50,7 @@ export async function boot() {
   startRealtime();
   refreshConversations().then(sync).catch(() => {});
   refreshCircle().catch(() => {});
+  ensurePush().catch(() => {});
 }
 
 sessionEvents.addEventListener('expired', () => {
@@ -1059,13 +1060,29 @@ export async function pushEnabled() {
   return Boolean(await reg?.pushManager.getSubscription());
 }
 
+const PUSH_OFF = 'haven-push-off';
+const PUSH_ASKED = 'haven-push-asked';
+const flag = (k: string) => { try { return localStorage.getItem(k) === '1'; } catch { return false; } };
+const setFlag = (k: string, on: boolean) => { try { if (on) localStorage.setItem(k, '1'); else localStorage.removeItem(k); } catch { /* private mode */ } };
+
 export async function enablePush() {
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') throw new Error('Notifications are turned off for Haven in your device settings.');
+  setFlag(PUSH_OFF, false);
+  await subscribeDevice();
+}
+
+/** Switched off by the user in Settings: stays off until they turn it on again. */
+export async function turnOffPush() {
+  setFlag(PUSH_OFF, true);
+  await disablePush();
+}
+
+async function subscribeDevice() {
   const reg = await navigator.serviceWorker.ready;
   const { publicKey } = await api<{ publicKey: string }>('GET', '/api/push/key');
   const key = Uint8Array.from(atob(publicKey.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
-  const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+  const sub = (await reg.pushManager.getSubscription()) ?? (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }));
   const json = sub.toJSON();
   await api('POST', '/api/push/subscribe', { endpoint: json.endpoint, keys: json.keys });
 }
@@ -1464,4 +1481,27 @@ export async function deleteForEveryone(msg: Msg) {
   if (msg.media) await forgetFile(msg.id);
   await updateMessage(deletedCopy(msg));
   if (path) api('POST', '/api/attachments/delete', { path }).catch(() => {});
+}
+
+// ------------------------------------------------------------------ push on by default
+
+/** Already allowed on this device: make sure the server has this device's subscription. */
+async function ensurePush() {
+  if (!pushSupported() || Notification.permission !== 'granted' || flag(PUSH_OFF)) return;
+  await subscribeDevice();
+}
+
+// Notifications are on from the start: the first tap after signing in asks for permission once
+// (browsers only allow that during a tap), then this device subscribes.
+if (typeof document !== 'undefined') {
+  const ask = () => {
+    if (!getState().me || !pushSupported() || flag(PUSH_OFF) || flag(PUSH_ASKED) || Notification.permission !== 'default') {
+      if (flag(PUSH_ASKED) || flag(PUSH_OFF) || (pushSupported() && Notification.permission !== 'default')) document.removeEventListener('click', ask, true);
+      return;
+    }
+    document.removeEventListener('click', ask, true);
+    setFlag(PUSH_ASKED, true);
+    enablePush().catch(() => {});
+  };
+  document.addEventListener('click', ask, true);
 }
