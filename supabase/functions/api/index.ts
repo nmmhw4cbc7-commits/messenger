@@ -322,10 +322,18 @@ async function sendPush(userIds: string[]) {
 
 // ------------------------------------------------------------------ Telegram verification
 
-const BOT_TOKEN = () => Deno.env.get('TELEGRAM_BOT_TOKEN') || '';
+// The bot token comes from the TELEGRAM_BOT_TOKEN secret, or else from the private kv table.
+let tokenCache: { at: number; value: string } | null = null;
+async function botToken(): Promise<string> {
+  const fromEnv = Deno.env.get('TELEGRAM_BOT_TOKEN');
+  if (fromEnv) return fromEnv;
+  if (tokenCache && now() - tokenCache.at < MIN) return tokenCache.value;
+  tokenCache = { at: now(), value: (await kvGet('telegram_bot_token')) || '' };
+  return tokenCache.value;
+}
 
 async function telegram(method: string, payload: unknown) {
-  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/${method}`, {
+  const res = await fetch(`https://api.telegram.org/bot${await botToken()}/${method}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -338,7 +346,7 @@ async function telegram(method: string, payload: unknown) {
 
 /** Make sure the bot is known and its webhook points here. Returns the bot username. */
 async function ensureBot(): Promise<string> {
-  const token = BOT_TOKEN();
+  const token = await botToken();
   if (!token) throw new HttpError(503, 'verification_unavailable', 'Phone verification is not set up yet. Please try again later.');
   const fingerprint = sha256(token).slice(0, 16);
   const [cachedFp, cachedName] = await Promise.all([kvGet('telegram_bot_fp'), kvGet('telegram_bot_username')]);
@@ -1048,7 +1056,7 @@ route('DELETE', '/push/subscribe', async ({ req, reply, body }) => {
   return ok;
 });
 
-route('GET', '/health', async () => ({ ok: true, verification: Boolean(BOT_TOKEN()) }), false);
+route('GET', '/health', async () => ({ ok: true, verification: Boolean(await botToken()) }), false);
 
 // ------------------------------------------------------------------ server
 
