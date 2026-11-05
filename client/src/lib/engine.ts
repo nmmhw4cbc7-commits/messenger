@@ -452,6 +452,8 @@ async function addMessages(msgs: Msg[], countUnread: boolean) {
   const convs = { ...s.convs };
   const visible = document.visibilityState === 'visible';
 
+  // A message from someone ends their "typing…".
+  for (const m of msgs) if (m.senderId) stopTyping(m.convId, m.senderId);
   for (const m of msgs) {
     if (messages[m.convId]) {
       const list = messages[m.convId].filter((x) => x.id !== m.id);
@@ -969,7 +971,7 @@ function connect() {
     heartbeat = window.setInterval(() => sendFrame({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: String(++ref) }), 25_000);
   };
   ws.onmessage = (e) => {
-    let msg: { event?: string; ref?: string; payload?: { status?: string; event?: string } };
+    let msg: { event?: string; ref?: string; payload?: { status?: string; event?: string; payload?: { c?: unknown; u?: unknown } } };
     try {
       msg = JSON.parse(String(e.data));
     } catch {
@@ -998,6 +1000,7 @@ function connect() {
       refreshMe().catch(() => {});
     }
     else if (kind === 'signout') api('GET', '/api/me').catch(() => {});
+    else if (kind === 'typing') onTyping(msg.payload?.payload);
   };
   ws.onclose = () => {
     if (socket !== ws) return;
@@ -1542,4 +1545,47 @@ export function describePresence(p: Presence | null): string {
   if (d.toDateString() === today.toDateString()) return `last seen today at ${time}`;
   if (d.toDateString() === yesterday.toDateString()) return `last seen yesterday at ${time}`;
   return `last seen ${d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
+}
+
+// ------------------------------------------------------------------ typing indicator
+
+const TYPING_MS = 6000;
+const lastTypingSent: Record<string, number> = {};
+
+/** Tell the others in this chat that I am typing (at most every 3 seconds). */
+export function sendTyping(convId: string) {
+  const now = Date.now();
+  if (now - (lastTypingSent[convId] ?? 0) < 3000) return;
+  lastTypingSent[convId] = now;
+  api('POST', `/api/conversations/${convId}/typing`, {}).catch(() => {});
+}
+
+function onTyping(p: { c?: unknown; u?: unknown } | undefined) {
+  const convId = typeof p?.c === 'string' ? p.c : '';
+  const userId = typeof p?.u === 'string' ? p.u : '';
+  if (!convId || !userId || userId === getState().me?.id || !getState().convs[convId]) return;
+  const until = Date.now() + TYPING_MS;
+  setState((s) => ({ typing: { ...s.typing, [convId]: { ...(s.typing[convId] ?? {}), [userId]: until } } }));
+  setTimeout(() => {
+    if ((getState().typing[convId]?.[userId] ?? 0) <= Date.now()) stopTyping(convId, userId);
+  }, TYPING_MS + 50);
+}
+
+function stopTyping(convId: string, userId: string) {
+  const conv = getState().typing[convId];
+  if (!conv || !(userId in conv)) return;
+  const { [userId]: _gone, ...rest } = conv;
+  void _gone;
+  setState((s) => ({ typing: { ...s.typing, [convId]: rest } }));
+}
+
+/** "typing…", "Robin is typing…", "2 people are typing…" (or '' if nobody is). */
+export function typingLabel(conv: Conv | undefined, typing: Record<string, number> | undefined, meId: string | undefined) {
+  if (!conv || !typing) return '';
+  const now = Date.now();
+  const ids = Object.entries(typing).filter(([id, until]) => until > now && id !== meId).map(([id]) => id);
+  if (!ids.length) return '';
+  if (conv.kind === 'direct') return 'typing…';
+  if (ids.length > 1) return `${ids.length} people are typing…`;
+  return `${displayName(conv.members.find((m) => m.id === ids[0])).split(' ')[0] || 'Someone'} is typing…`;
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { getState, useStore, type Conv, type Msg } from '../lib/store';
-import { avatarUrl, convTitle, displayName, otherMember, deleteChat, markRead, summarize } from '../lib/engine';
+import { avatarUrl, convTitle, displayName, otherMember, deleteChat, markRead, summarize, typingLabel } from '../lib/engine';
 import { formatListTime } from '../lib/format';
 import { Avatar, Empty, NavButton, Screen, Spinner, actionSheet, confirmAction } from '../ui/components';
 import { Chats, Compose, Gear, Lock, Search, Clock, Alert, Check, Trash } from '../ui/icons';
@@ -152,6 +152,7 @@ function ChatRow({ conv, meId, onOpen }: { conv: Conv; meId?: string; onOpen: ()
   const other = otherMember(conv, meId);
   const title = convTitle(conv, meId);
   const last = conv.last;
+  const typingNow = useStore((s) => typingLabel(conv, s.typing[conv.id], meId));
   const rowRef = useRef<HTMLButtonElement>(null);
   const offset = useRef(0);
   const suppressClick = useRef(false);
@@ -260,10 +261,12 @@ function ChatRow({ conv, meId, onOpen }: { conv: Conv; meId?: string; onOpen: ()
             <span class={`chat-row-time${conv.unread ? ' unread' : ''}`}>{last ? formatListTime(last.createdAt) : ''}</span>
           </span>
           <span class="chat-row-bottom">
-            <span class="chat-row-preview">
+            <span class={`chat-row-preview${typingNow ? ' typing' : ''}`}>
+              {typingNow ? typingNow : <>
               {last?.senderId === meId && last?.status === 'pending' && <Clock size={14} class="inline-icon" />}
               {last?.senderId === meId && last?.status === 'failed' && <Alert size={14} class="inline-icon danger" />}
               {conv.left ? 'You are no longer a member' : preview(last, conv, meId)}
+              </>}
             </span>
             {conv.unread > 0 && <span class="unread-badge">{conv.unread > 99 ? '99+' : conv.unread}</span>}
           </span>

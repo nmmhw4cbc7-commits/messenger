@@ -2459,3 +2459,6 @@ button.vlog-reaction:active { transform: scale(0.94); }
 .hero-presence { margin-top: 4px; font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.04em; color: var(--text-2); }
 .hero-presence.online { color: var(--signal); }
 .hero-presence.online::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--signal); vertical-align: 1px; }
+
+/* Typing indicator */
+.chat-header-sub.typing, .chat-row-preview.typing { color: var(--signal); font-style: italic; }

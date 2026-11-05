@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import type { JSX } from 'preact';
 import { useStore, type Conv, type Msg, type ReplyRef } from '../lib/store';
 import {
-  avatarUrl, convTitle, displayName, loadMessages, otherMember, sendText, setOpenConv, retry, deleteMessage, deleteForEveryone, editMessage, acceptKeyChange,
+  avatarUrl, convTitle, displayName, loadMessages, otherMember, sendText, sendTyping, typingLabel, setOpenConv, retry, deleteMessage, deleteForEveryone, editMessage, acceptKeyChange,
   react, isReadByAll, summarize,
 } from '../lib/engine';
 import { MediaView, LocationCard, ContactCard, PollCard, VoiceRecorder, openAttachSheet, Mic, Plus } from './Attachments';
@@ -45,6 +45,7 @@ export function ChatScreen({ convId }: { convId: string }) {
 
   const presenceOf = conv?.kind === 'direct' && me ? otherMember(conv, me.id)?.id : undefined;
   const presence = usePresence(presenceOf);
+  const typingNow = useStore((s) => typingLabel(s.convs[convId], s.typing[convId], s.me?.id));
 
   if (!conv || !me) {
     return (
@@ -58,7 +59,7 @@ export function ChatScreen({ convId }: { convId: string }) {
   const title = convTitle(conv, me.id);
   const openInfo = () => nav.push(conv.kind === 'group' ? <GroupInfo convId={conv.id} /> : <ContactInfo convId={conv.id} />);
   const changed = conv.members.filter((m) => m.id !== me.id && pins[m.id]?.needsAck);
-  const subtitle = conv.kind === 'group'
+  const subtitle = typingNow ? typingNow : conv.kind === 'group'
     ? conv.members.map((m) => (m.id === me.id ? 'You' : displayName(m).split(' ')[0])).join(', ')
     : presence || 'End-to-end encrypted';
 
@@ -84,7 +85,7 @@ export function ChatScreen({ convId }: { convId: string }) {
             <Avatar id={conv.kind === 'group' ? conv.id : other?.id ?? conv.id} name={title} src={other ? avatarUrl(other) : null} size={38} group={conv.kind === 'group'} />
             <span class="chat-header-text">
               <span class="chat-header-title">{title}</span>
-              <span class={`chat-header-sub${presence === 'online' ? ' online' : ''}`}>{subtitle}</span>
+              <span class={`chat-header-sub${typingNow || presence === 'online' ? ' online' : ''}${typingNow ? ' typing' : ''}`}>{subtitle}</span>
             </span>
           </button>
         </div>
@@ -605,7 +606,11 @@ function Composer({ conv, paused, replyTo, replyName, onCancelReply }: {
             maxLength={4000}
             disabled={paused}
             enterkeyhint={coarse ? 'enter' : 'send'}
-            onInput={(e) => update((e.target as HTMLTextAreaElement).value)}
+            onInput={(e) => {
+              const v = (e.target as HTMLTextAreaElement).value;
+              update(v);
+              if (v.trim()) sendTyping(convId);
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey && !coarse && !e.isComposing) {
                 e.preventDefault();

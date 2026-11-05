@@ -266,14 +266,14 @@ const meOf = (user: Row) => loadMe(user.id, user.device_id);
 // ------------------------------------------------------------------ realtime & push
 
 /** Tell users' apps to sync. The hint carries no data; the channel name is a per-user secret. */
-async function broadcast(userIds: string[], event: 'sync' | 'conversations' | 'profiles' | 'signout' | 'read') {
+async function broadcast(userIds: string[], event: 'sync' | 'conversations' | 'profiles' | 'signout' | 'read' | 'typing', payload: Record<string, string> = {}) {
   if (!userIds.length) return;
   const rows = await sql`select inbox_token from haven.devices where user_id = any(${userIds})`;
   if (!rows.length) return;
   await fetch(`${SUPABASE_URL}/realtime/v1/api/broadcast`, {
     method: 'POST',
     headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages: rows.map((r) => ({ topic: `inbox:${r.inbox_token}`, event, payload: {} })) }),
+    body: JSON.stringify({ messages: rows.map((r) => ({ topic: `inbox:${r.inbox_token}`, event, payload })) }),
     signal: AbortSignal.timeout(5000),
   }).catch(() => {});
 }
@@ -415,9 +415,9 @@ async function ensurePick(convId: string, day: string): Promise<string | null> {
   return row?.user_id ?? null;
 }
 
-/** Tell the circle who vlogs today (once per day, during the day). */
+/** Tell the circle who vlogs today: from 6:00 (German time), once per day. */
 async function announcePick(convId: string, day: string, hour: number) {
-  if (hour < 8 || hour >= 22) return;
+  if (hour < 6 || hour >= 22) return;
   const [row] = await sql`update haven.circle_days set notified = true
                           where conversation_id = ${convId} and day = ${day} and not notified returning user_id`;
   if (!row) return;
@@ -1385,6 +1385,18 @@ route('POST', '/conversations/:id/messages', async ({ req, reply, params, body }
     await broadcast([user.id], 'sync');
   }
   return { id: b.id, createdAt: t };
+});
+
+// ---- typing indicator (a short-lived hint, nothing is stored)
+
+route('POST', '/conversations/:id/typing', async ({ req, reply, params }) => {
+  const user = await currentUser(req, reply);
+  await enforce(`typing:${user.id}`, 60, MIN);
+  const conv = await membershipOrThrow(params.id, user.id);
+  const blockers = new Set((await sql`select blocker_id from haven.blocks where blocked_id = ${user.id}`).map((r) => r.blocker_id));
+  const others = (await memberIds(conv.id)).filter((id) => id !== user.id && !blockers.has(id));
+  await broadcast(others, 'typing', { c: conv.id, u: user.id });
+  return ok;
 });
 
 // ---- read receipts

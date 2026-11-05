@@ -139,6 +139,8 @@ export interface State {
   activity: Activity[];
   /** Everything up to this time has been seen. */
   activitySeen: number;
+  /** Who is typing right now: convId -> userId -> until (ms). */
+  typing: Record<string, Record<string, number>>;
 }
 
 export interface Activity {
@@ -180,6 +182,7 @@ let state: State = {
   circle: null,
   activity: [],
   activitySeen: 0,
+  typing: {},
 };
 
 const listeners = new Set<() => void>();
