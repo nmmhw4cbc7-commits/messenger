@@ -76,6 +76,13 @@ export async function putMany(name: StoreName, values: unknown[]): Promise<void>
   });
 }
 
+/** All records of a store with their keys (for stores without a key path). */
+export async function entries<T>(name: StoreName): Promise<[IDBValidKey, T][]> {
+  const s = await store(name, 'readonly');
+  const [keys, values] = await Promise.all([request(s.getAllKeys()), request(s.getAll())]);
+  return keys.map((k, i) => [k, values[i] as T]);
+}
+
 export async function del(name: StoreName, key: IDBValidKey): Promise<void> {
   await request((await store(name, 'readwrite')).delete(key));
 }

@@ -730,12 +730,13 @@ route('POST', '/link/start', async ({ body, ip }) => {
 // A signed-in device scans the code and approves.
 route('POST', '/link/approve', async ({ req, reply, body }) => {
   const user = await currentUser(req, reply);
-  const { code } = shape<{ code: string }>(body, { code: [str(12, 12, LINK_CODE), true] });
+  const { code, history } = shape<{ code: string; history?: boolean }>(body, { code: [str(12, 12, LINK_CODE), true], history: [(v) => typeof v === 'boolean', false] });
   await enforce(`link:approve:${user.id}`, 10, HOUR);
-  const [r] = await sql`update haven.link_requests set user_id = ${user.id}
-                        where code_hash = ${sha256(code)} and user_id is null and expires_at > ${now()} returning name`;
+  // Approved requests stay around a little longer so the history can be handed over.
+  const [r] = await sql`update haven.link_requests set user_id = ${user.id}, history_state = ${history ? 'pending' : 'none'}, expires_at = ${now() + 20 * MIN}
+                        where code_hash = ${sha256(code)} and user_id is null and expires_at > ${now()} returning id, name, enc_pub`;
   if (!r) throw new HttpError(400, 'link_invalid', 'This code is not valid or has expired. Show a new code on the other device.');
-  return { ok: true, name: r.name };
+  return { ok: true, name: r.name, linkId: r.id, encPub: r.enc_pub };
 });
 
 // The new device waits for approval, then gets its own device and session.
@@ -747,15 +748,21 @@ route('POST', '/link/poll', async ({ body, reply, ip }) => {
     throw new HttpError(400, 'link_expired', 'This code expired. Show a new one.');
   }
   if (!r.user_id) return { status: 'pending' };
-  const used = await sql`delete from haven.link_requests where id = ${r.id} returning id`;
-  if (!used.length) throw new HttpError(400, 'link_expired', 'This code expired. Show a new one.');
+  if (r.device_id) throw new HttpError(400, 'link_expired', 'This code was already used. Show a new one.');
   const t = now();
-  const [device] = await sql`insert into haven.devices (id, user_id, enc_pub, sig_pub, inbox_token, name, created_at, last_active_at)
-                             values (${randomId()}, ${r.user_id}, ${r.enc_pub}, ${r.sig_pub}, ${newToken()}, ${r.name}, ${t}, ${t}) returning *`;
+  const deviceId = randomId();
+  const device = await sql.begin(async (tx) => {
+    const claimed = await tx`update haven.link_requests set device_id = ${deviceId} where id = ${r.id} and device_id is null returning id`;
+    if (!claimed.length) throw new HttpError(400, 'link_expired', 'This code was already used. Show a new one.');
+    const [d] = await tx`insert into haven.devices (id, user_id, enc_pub, sig_pub, inbox_token, name, created_at, last_active_at)
+                         values (${deviceId}, ${r.user_id}, ${r.enc_pub}, ${r.sig_pub}, ${newToken()}, ${r.name}, ${t}, ${t}) returning *`;
+    return d;
+  });
+  if (r.history_state === 'none') await sql`delete from haven.link_requests where id = ${r.id}`;
   await createSession(reply, r.user_id, device.id);
   await broadcast(await contactsOf(r.user_id), 'profiles');
   await broadcast([r.user_id], 'profiles');
-  return { status: 'ok', me: await loadMe(r.user_id, device.id) };
+  return { status: 'ok', me: await loadMe(r.user_id, device.id), history: r.history_state !== 'none' };
 }, false);
 
 route('GET', '/devices', async ({ req, reply }) => {
@@ -773,6 +780,55 @@ route('DELETE', '/devices/:deviceId', async ({ req, reply, params }) => {
   await broadcastTopic(`inbox:${d.inbox_token}`, 'signout');
   await broadcast(await contactsOf(user.id), 'profiles');
   await broadcast([user.id], 'profiles');
+  return ok;
+});
+
+// ---- chat history hand-over (old device -> new device, end-to-end encrypted)
+
+const transferPath = (linkId: string) => `transfer/${linkId}`;
+
+async function ownLink(linkId: string, userId: string) {
+  const [r] = await sql`select * from haven.link_requests where id = ${linkId} and user_id = ${userId} and expires_at > ${now()}`;
+  if (!r) throw new HttpError(404, 'not_found', 'This transfer is no longer available.');
+  return r;
+}
+
+// Old device: where to upload the encrypted bundle.
+route('POST', '/link/history/upload', async ({ req, reply, body }) => {
+  const user = await currentUser(req, reply);
+  const { linkId } = shape<{ linkId: string; size: number }>(body, { linkId: [isId, true], size: [int(1, MAX_ATTACHMENT), true] });
+  const r = await ownLink(linkId, user.id);
+  if (r.history_state !== 'pending') throw new HttpError(409, 'not_pending');
+  const data = await storageCall('POST', `/object/upload/sign/attachments/${transferPath(linkId)}`, {});
+  return { uploadUrl: `${SUPABASE_URL}/storage/v1${data.url}` };
+});
+
+// Old device: bundle uploaded (key is wrapped for the new device), or nothing to send.
+route('POST', '/link/history/done', async ({ req, reply, body }) => {
+  const user = await currentUser(req, reply);
+  const b = shape<{ linkId: string; key?: string }>(body, { linkId: [isId, true], key: [str(1, 2000), false] });
+  await ownLink(b.linkId, user.id);
+  if (b.key) await sql`update haven.link_requests set history_state = 'ready', history_key = ${b.key} where id = ${b.linkId}`;
+  else await sql`update haven.link_requests set history_state = 'none' where id = ${b.linkId}`;
+  await broadcast([user.id], 'sync');
+  return ok;
+});
+
+// New device: is the history there yet?
+route('GET', '/link/history', async ({ req, reply }) => {
+  const user = await currentUser(req, reply);
+  const [r] = await sql`select * from haven.link_requests where device_id = ${user.device_id}`;
+  if (!r || r.history_state === 'none') return { state: 'none' };
+  if (r.history_state === 'pending') return { state: Number(r.expires_at) > now() ? 'pending' : 'none' };
+  const data = await storageCall('POST', `/object/sign/attachments/${transferPath(r.id)}`, { expiresIn: 600 });
+  return { state: 'ready', url: `${SUPABASE_URL}/storage/v1${data.signedURL ?? data.signedUrl}`, key: r.history_key };
+});
+
+// New device: imported (or gave up). The bundle is deleted from the server.
+route('POST', '/link/history/finish', async ({ req, reply }) => {
+  const user = await currentUser(req, reply);
+  const [r] = await sql`delete from haven.link_requests where device_id = ${user.device_id} returning id`;
+  if (r) await storageCall('DELETE', '/object/attachments', { prefixes: [transferPath(r.id)] }).catch(() => {});
   return ok;
 });
 

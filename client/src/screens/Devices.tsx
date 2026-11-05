@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { encode } from 'uqr';
 import jsQR from 'jsqr';
-import { approveLink, checkLink, listDevices, removeDevice, startLink, type LinkRequest, type LinkedDevice } from '../lib/engine';
+import { approveLink, checkLink, listDevices, removeDevice, sendHistory, startLink, type LinkRequest, type LinkedDevice } from '../lib/engine';
 import { errorMessage } from '../lib/api';
 import { useStore } from '../lib/store';
 import { formatListTime } from '../lib/format';
@@ -147,25 +147,36 @@ function ScanScreen({ onLinked }: { onLinked: () => void }) {
   const [busy, run] = useAsync();
   const done = useRef(false);
 
+  const [transferring, setTransferring] = useState(false);
+
+  const link = (code: string, history: boolean) => run(async () => {
+    const res = await approveLink(code, history);
+    onLinked();
+    if (history) {
+      setTransferring(true);
+      try {
+        await sendHistory(res.linkId, res.encPub);
+        toast(`${res.name || 'Device'} linked · chats transferred`);
+      } catch {
+        toast('Device linked, but the chats could not be transferred.', 'error');
+      }
+    } else {
+      toast(`${res.name || 'Device'} linked`);
+    }
+    await goBack();
+  }, (err) => { toast(errorMessage(err), 'error'); done.current = false; setTransferring(false); });
+
   const approve = (code: string) => {
     if (done.current) return;
     done.current = true;
     navigator.vibrate?.(12);
     alertDialog({
       title: 'Link this device?',
-      message: 'It will be able to read and send all new messages. Only link devices you own.',
+      message: 'It will be able to read and send messages. Only link devices you own.',
       buttons: [
+        { label: 'Link and transfer chats', style: 'default', run: () => link(code, true) },
+        { label: 'Link without chats', run: () => link(code, false) },
         { label: 'Cancel', style: 'cancel', run: () => { done.current = false; } },
-        {
-          label: 'Link',
-          style: 'default',
-          run: () => run(async () => {
-            const res = await approveLink(code);
-            toast(`${res.name || 'Device'} linked`);
-            onLinked();
-            await goBack();
-          }, (err) => { toast(errorMessage(err), 'error'); done.current = false; }),
-        },
       ],
       onDismiss: () => { done.current = false; },
     });
@@ -211,6 +222,18 @@ function ScanScreen({ onLinked }: { onLinked: () => void }) {
   }, []);
 
   const cleanCode = manual.toUpperCase().replace(/[^A-Z2-9]/g, '');
+
+  if (transferring) {
+    return (
+      <Screen title="Transferring" grouped>
+        <div class="feature-hero transfer">
+          <span class="feature-icon on"><Spinner size={28} /></span>
+          <h2>Transferring your chats</h2>
+          <p>Your chats are encrypted on this phone so only your new device can open them. Keep Haven open until this is done.</p>
+        </div>
+      </Screen>
+    );
+  }
 
   return (
     <Screen back title="Scan code" grouped>

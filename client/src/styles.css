@@ -2237,3 +2237,16 @@ button.plain-row:active { background: var(--press); transition: none; }
 .scanner-error { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; color: #fff; text-align: center; font-size: 15px; line-height: 1.4; }
 .scanner-hint { text-align: center; color: var(--text-2); font-size: 14px; margin: 0 24px 22px; }
 .mono-input { font-family: var(--mono); letter-spacing: 0.12em; text-transform: uppercase; }
+
+.import-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 16px 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--warn-bg);
+  color: var(--warn-text);
+  font-size: 14px;
+}
+.feature-hero.transfer { padding-top: 60px; }

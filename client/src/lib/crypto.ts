@@ -326,3 +326,39 @@ export async function safetyNumber(a: KeyOwner, b: KeyOwner) {
   const digits = (await part(first)) + (await part(second));
   return digits.match(/.{5}/g) as string[];
 }
+
+// ------------------------------------------------------------------ sealed boxes (device-to-device hand-over)
+
+/**
+ * Encrypt bytes so that only the holder of `recipientEncPub` can open them:
+ * a fresh AES-256-GCM key encrypts the data, and an ephemeral ECDH key + HKDF
+ * wraps that key. Returns the ciphertext and a small JSON key blob.
+ */
+export async function seal(data: Uint8Array<ArrayBuffer>, recipientEncPub: string) {
+  const keyRaw = random(32);
+  const key = await subtle.importKey('raw', keyRaw, 'AES-GCM', false, ['encrypt']);
+  const iv = random(12);
+  const ct = await subtle.encrypt({ name: 'AES-GCM', iv }, key, data);
+  const eph = await subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
+  const ephPub = toB64u(await subtle.exportKey('raw', eph.publicKey));
+  const shared = await subtle.deriveBits({ name: 'ECDH', public: await ecdhPub(recipientEncPub) }, eph.privateKey, 256);
+  const wk = await sealKey(shared, ephPub, 'encrypt');
+  const wiv = random(12);
+  const wrapped = await subtle.encrypt({ name: 'AES-GCM', iv: wiv }, wk, keyRaw);
+  keyRaw.fill(0);
+  return { ciphertext: new Uint8Array(ct), key: JSON.stringify({ v: 1, eph: ephPub, iv: toB64u(iv), wiv: toB64u(wiv), k: toB64u(wrapped) }) };
+}
+
+export async function unseal(identity: Identity, ciphertext: ArrayBuffer, keyJson: string): Promise<Uint8Array<ArrayBuffer>> {
+  const k = JSON.parse(keyJson) as { v: number; eph: string; iv: string; wiv: string; k: string };
+  const shared = await subtle.deriveBits({ name: 'ECDH', public: await ecdhPub(k.eph) }, identity.encPriv, 256);
+  const wk = await sealKey(shared, k.eph, 'decrypt');
+  const keyRaw = await subtle.decrypt({ name: 'AES-GCM', iv: fromB64u(k.wiv) }, wk, fromB64u(k.k));
+  const key = await subtle.importKey('raw', keyRaw, 'AES-GCM', false, ['decrypt']);
+  return new Uint8Array(await subtle.decrypt({ name: 'AES-GCM', iv: fromB64u(k.iv) }, key, ciphertext));
+}
+
+async function sealKey(shared: ArrayBuffer, eph: string, usage: KeyUsage) {
+  const ikm = await subtle.importKey('raw', shared, 'HKDF', false, ['deriveKey']);
+  return subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: enc.encode(eph), info: enc.encode('haven/v1/history-transfer') }, ikm, { name: 'AES-GCM', length: 256 }, false, [usage]);
+}

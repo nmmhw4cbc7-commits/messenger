@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { getState, useStore, type Conv, type Msg } from '../lib/store';
 import { avatarUrl, convTitle, displayName, otherMember, deleteChat, markRead, summarize } from '../lib/engine';
 import { formatListTime } from '../lib/format';
-import { Avatar, Empty, NavButton, Screen, actionSheet, confirmAction } from '../ui/components';
+import { Avatar, Empty, NavButton, Screen, Spinner, actionSheet, confirmAction } from '../ui/components';
 import { Chats, Compose, Gear, Lock, Search, Clock, Alert, Check, Trash } from '../ui/icons';
 import { useNav } from '../ui/nav';
 import { ChatScreen } from './Chat';
@@ -61,6 +61,7 @@ function ChatsTab() {
   const me = useStore((s) => s.me);
   useStore((s) => s.aliases); // re-render when contact names change
   const connected = useStore((s) => s.connected);
+  const importing = useStore((s) => s.importing);
   const [query, setQuery] = useState('');
 
   const list = useMemo(() => {
@@ -84,6 +85,12 @@ function ChatsTab() {
       titleNode={connected ? 'Chats' : <span class="connecting">Connecting…</span>}
       right={<NavButton onClick={openNew} label="New chat"><Compose size={25} /></NavButton>}
     >
+      {importing !== 'none' && (
+        <div class="import-banner" role="status">
+          <Spinner size={16} />
+          <span>{importing === 'waiting' ? 'Waiting for your chats from your other device…' : 'Importing your chats…'}</span>
+        </div>
+      )}
       {hasAny && (
         <div class="search-bar in-list">
           <Search size={18} />

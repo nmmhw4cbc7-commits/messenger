@@ -201,14 +201,17 @@ async function register(page, national, e164, name, prefix) {
   await a.getByRole('button', { name: /Link a device/ }).click();
   await a.getByLabel('Pairing code').fill(pairCode);
   await a.getByRole('button', { name: 'Link', exact: true }).click();
-  await a.locator('.alert-buttons button', { hasText: 'Link' }).click();
+  await a.locator('.alert-buttons button', { hasText: 'Link and transfer chats' }).click();
   await ad.getByRole('heading', { name: 'Chats', exact: true }).waitFor({ timeout: 20000 });
   await a.locator('.stack-item.top .cell-title', { hasText: /·/ }).first().waitFor({ timeout: 15000 });
   await shot(a, 'a-07d-devices');
   // Ben writes: both of Anna's devices receive it
   await b.getByRole('textbox', { name: 'Message' }).fill('Hello to both of your devices');
   await b.getByRole('button', { name: 'Send' }).click();
+  await ad.locator('.import-banner').waitFor({ state: 'detached', timeout: 60000 }).catch(() => {});
   await ad.locator('.chat-row', { hasText: 'Ben Okafor' }).click();
+  // Old messages arrived through the encrypted history transfer
+  await ad.locator('.stack-item.top .bubble-text', { hasText: 'Can you read this?' }).waitFor({ timeout: 60000 });
   await ad.locator('.stack-item.top .bubble-text', { hasText: 'Hello to both of your devices' }).waitFor({ timeout: 20000 });
   // The linked device writes: Ben gets it, and Anna's phone shows it as her own message
   await ad.getByRole('textbox', { name: 'Message' }).fill('Sent from my laptop');

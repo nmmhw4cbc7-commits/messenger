@@ -123,6 +123,8 @@ export interface State {
   aliases: Record<string, string>;
   /** Show sender and text in push notifications. */
   pushPreview: boolean;
+  /** Chat history is being transferred from another device. */
+  importing: 'none' | 'waiting' | 'importing';
 }
 
 let state: State = {
@@ -138,6 +140,7 @@ let state: State = {
   lastPhone: '',
   aliases: {},
   pushPreview: true,
+  importing: 'none',
 };
 
 const listeners = new Set<() => void>();

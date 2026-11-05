@@ -3,7 +3,7 @@
 
 import { api, ApiError, sessionEvents } from './api';
 import * as idb from './idb';
-import { createIdentity, decryptMessage, encryptMessage, randomId, type Envelope, type Identity } from './crypto';
+import { createIdentity, decryptMessage, encryptMessage, randomId, seal, unseal, toB64u, fromB64u, type Envelope, type Identity } from './crypto';
 import { getState, setState, type Conv, type DeviceKey, type Me, type Member, type Msg, type Pin, type Profile, type ReplyRef, type SystemBody, type Theme } from './store';
 import type { Payload, MediaPayload } from './crypto';
 import { uploadMedia, storeLocalFile, forgetFile } from './media';
@@ -1115,16 +1115,133 @@ export async function startLink(): Promise<LinkRequest> {
 
 /** New device: has the other device approved yet? */
 export async function checkLink(req: LinkRequest): Promise<boolean> {
-  const res = await api<{ status: 'pending' } | { status: 'ok'; me: Me }>('POST', '/api/link/poll', { linkId: req.linkId, pollSecret: req.pollSecret });
+  const res = await api<{ status: 'pending' } | { status: 'ok'; me: Me; history: boolean }>('POST', '/api/link/poll', { linkId: req.linkId, pollSecret: req.pollSecret });
   if (res.status === 'pending') return false;
   pendingIdentity!.phone = res.me.phone;
   await finishSignIn(res.me);
+  if (res.history) receiveHistory();
   return true;
 }
 
 /** Signed-in device: approve a code scanned from the new device. */
-export async function approveLink(code: string) {
-  return api<{ ok: true; name: string }>('POST', '/api/link/approve', { code });
+export async function approveLink(code: string, history: boolean) {
+  return api<{ ok: true; name: string; linkId: string; encPub: string }>('POST', '/api/link/approve', { code, history });
+}
+
+// ------------------------------------------------------------------ chat history hand-over
+
+const HISTORY_MEDIA_BUDGET = 18 * 1024 * 1024;
+
+interface HistoryBundle {
+  v: 1;
+  convs: Conv[];
+  messages: Msg[];
+  pins: Pin[];
+  aliases: Record<string, string>;
+  files: [string, string, string][]; // [messageId, mime, base64url]
+}
+
+async function gzip(bytes: Uint8Array<ArrayBuffer>): Promise<{ data: Uint8Array<ArrayBuffer>; gz: boolean }> {
+  if (typeof CompressionStream === 'undefined') return { data: bytes, gz: false };
+  const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip'));
+  return { data: new Uint8Array(await new Response(stream).arrayBuffer()), gz: true };
+}
+
+async function gunzip(bytes: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+/**
+ * Old device: pack the chats stored here, encrypt them for the new device and
+ * hand them over. View-once photos are never included.
+ */
+export async function sendHistory(linkId: string, encPub: string) {
+  try {
+    const messages = (await idb.getAll<Msg>('messages')).filter((m) => m.kind !== 'notice' && m.status !== 'pending' && !m.media?.viewOnce);
+    const keep = new Set(messages.map((m) => m.id));
+    const files: HistoryBundle['files'] = [];
+    let budget = HISTORY_MEDIA_BUDGET;
+    for (const [id, blob] of await idb.entries<Blob>('files')) {
+      if (!keep.has(String(id)) || !(blob instanceof Blob) || blob.size > budget) continue;
+      budget -= blob.size;
+      files.push([String(id), blob.type, toB64u(new Uint8Array(await blob.arrayBuffer()))]);
+    }
+    const bundle: HistoryBundle = {
+      v: 1,
+      convs: await idb.getAll<Conv>('convs'),
+      messages,
+      pins: await idb.getAll<Pin>('pins'),
+      aliases: getState().aliases,
+      files,
+    };
+    const { data, gz } = await gzip(new TextEncoder().encode(JSON.stringify(bundle)));
+    const framed = new Uint8Array(data.length + 1);
+    framed[0] = gz ? 1 : 0;
+    framed.set(data, 1);
+    const { ciphertext, key } = await seal(framed, encPub);
+    const { uploadUrl } = await api<{ uploadUrl: string }>('POST', '/api/link/history/upload', { linkId, size: ciphertext.length });
+    const res = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: ciphertext });
+    if (!res.ok) throw new Error('Upload failed');
+    await api('POST', '/api/link/history/done', { linkId, key });
+  } catch (err) {
+    await api('POST', '/api/link/history/done', { linkId }).catch(() => {});
+    throw err;
+  }
+}
+
+/** New device: wait for the history from the old device and import it. */
+async function receiveHistory() {
+  setState({ importing: 'waiting' });
+  const deadline = Date.now() + 10 * 60_000;
+  try {
+    while (Date.now() < deadline) {
+      const res = await api<{ state: 'none' | 'pending' | 'ready'; url?: string; key?: string }>('GET', '/api/link/history').catch(() => null);
+      if (res?.state === 'none') return;
+      if (res?.state === 'ready' && res.url && res.key && identity) {
+        setState({ importing: 'importing' });
+        const download = await fetch(res.url);
+        if (!download.ok) throw new Error('Download failed');
+        const framed = await unseal(identity, await download.arrayBuffer(), res.key);
+        const json = framed[0] === 1 ? await gunzip(framed.slice(1)) : framed.slice(1);
+        await importHistory(JSON.parse(new TextDecoder().decode(json)) as HistoryBundle);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+  } catch {
+    // The chats stay on the other device; new messages arrive here anyway.
+  } finally {
+    setState({ importing: 'none' });
+    api('POST', '/api/link/history/finish').catch(() => {});
+  }
+}
+
+async function importHistory(bundle: HistoryBundle) {
+  if (bundle?.v !== 1 || !Array.isArray(bundle.messages)) return;
+  const known = new Set((await idb.getAll<Msg>('messages')).map((m) => m.id));
+  await idb.putMany('messages', bundle.messages.filter((m) => m && typeof m.id === 'string' && !known.has(m.id)));
+  for (const [id, mime, b64] of bundle.files ?? []) await idb.put('files', new Blob([fromB64u(b64)], { type: mime }), id).catch(() => {});
+  // Keep my own trust decisions; take the other device's where I have none yet.
+  const pins = getState().pins;
+  await idb.putMany('pins', (bundle.pins ?? []).filter((p) => p && !pins[p.userId]));
+  const convs = { ...getState().convs };
+  for (const c of bundle.convs ?? []) {
+    const cur = convs[c.id];
+    convs[c.id] = cur ? { ...cur, last: c.last && (!cur.last || c.last.sortKey > cur.last.sortKey) ? c.last : cur.last, hidden: cur.hidden && c.hidden } : { ...c, unread: 0 };
+  }
+  await idb.putMany('convs', Object.values(convs));
+  const aliases = { ...(bundle.aliases ?? {}), ...getState().aliases };
+  await idb.put('meta', aliases, 'aliases');
+  setState({
+    convs,
+    aliases,
+    pins: Object.fromEntries((await idb.getAll<Pin>('pins')).map((p) => [p.userId, p])),
+    messages: {},
+  });
+  const open = getState().openConvId;
+  if (open) await loadMessages(open);
+  await refreshConversations().catch(() => {});
 }
 
 export interface LinkedDevice {
