@@ -194,9 +194,13 @@ function MyTurn({ conv, today, posts }: { conv: Conv; today: string; posts: Msg[
   const usage = vlogUsage(posts);
   const pending = posts.some((p) => p.status === 'pending');
   const leftSeconds = VLOG_LIMITS.seconds - usage.seconds;
-  const canVideo = usage.photos === 0 && usage.videos < VLOG_LIMITS.videos && leftSeconds > 0;
-  const canPhoto = usage.videos === 0 && usage.photos < VLOG_LIMITS.photos;
+  // One budget for the day: 6 photos, or 3 videos (6 minutes), or a mix. A video counts as 2 photos.
+  const used = usage.videos * 2 + usage.photos;
+  const left = VLOG_LIMITS.photos - used;
+  const canVideo = usage.videos < VLOG_LIMITS.videos && leftSeconds > 0 && left >= 2;
+  const canPhoto = left >= 1;
   const done = !canVideo && !canPhoto;
+  const videoWhyNot = canVideo ? '' : leftSeconds <= 0 ? '6 min used' : 'No room for a video';
 
   const addVideo = async (capture: boolean) => {
     const file = await pickFile('video/*', capture);
@@ -229,26 +233,26 @@ function MyTurn({ conv, today, posts }: { conv: Conv; today: string; posts: Msg[
       <h2 class="vlog-card-title">{done ? 'Your day is vlogged' : 'Vlog your day'}</h2>
       <p class="vlog-card-text">
         {done ? 'Thanks for sharing. Your friends can follow your day now.'
-          : usage.videos ? `${usage.videos} of ${VLOG_LIMITS.videos} videos · ${formatDuration(usage.seconds)} of 6:00 used`
-          : usage.photos ? `${usage.photos} of ${VLOG_LIMITS.photos} photos`
-          : 'Share 3 videos (6 minutes in total) or 6 photos.'}
+          : used ? [
+            usage.videos ? `${usage.videos} ${usage.videos === 1 ? 'video' : 'videos'} (${formatDuration(usage.seconds)})` : '',
+            usage.photos ? `${usage.photos} ${usage.photos === 1 ? 'photo' : 'photos'}` : '',
+          ].filter(Boolean).join(' · ') + ` · room for ${left} more ${left === 1 ? 'photo' : 'photos'}${canVideo ? ` or ${Math.floor(left / 2)} ${Math.floor(left / 2) === 1 ? 'video' : 'videos'}` : ''}`
+          : 'Share up to 3 videos (6 minutes in total) or 6 photos, or mix them.'}
       </p>
-      {(usage.videos > 0 || usage.photos > 0) && (
+      {used > 0 && (
         <div class="vlog-meter" aria-hidden="true">
-          {Array.from({ length: usage.videos ? VLOG_LIMITS.videos : VLOG_LIMITS.photos }, (_, i) => (
-            <span key={i} class={i < (usage.videos || usage.photos) ? 'on' : ''} />
-          ))}
+          {Array.from({ length: VLOG_LIMITS.photos }, (_, i) => <span key={i} class={i < used ? 'on' : ''} />)}
         </div>
       )}
       {!done && (
         <div class="vlog-actions">
-          {canVideo && <button class="vlog-action" disabled={pending} onClick={() => addVideo(true)}><VlogIcon size={22} />Record</button>}
-          {canVideo && <button class="vlog-action" disabled={pending} onClick={() => addVideo(false)}><VlogIcon size={22} />Video</button>}
-          {canPhoto && <button class="vlog-action" disabled={pending} onClick={() => addPhoto(true)}><Camera size={22} />Take photo</button>}
-          {canPhoto && <button class="vlog-action" disabled={pending} onClick={() => addPhoto(false)}><Camera size={22} />Photo</button>}
+          <button class="vlog-action" disabled={pending || !canVideo} onClick={() => addVideo(true)}><VlogIcon size={22} />Take video{videoWhyNot && <em>{videoWhyNot}</em>}</button>
+          <button class="vlog-action" disabled={pending || !canVideo} onClick={() => addVideo(false)}><VlogIcon size={22} />Choose video{videoWhyNot && <em>{videoWhyNot}</em>}</button>
+          <button class="vlog-action" disabled={pending || !canPhoto} onClick={() => addPhoto(true)}><Camera size={22} />Take photo</button>
+          <button class="vlog-action" disabled={pending || !canPhoto} onClick={() => addPhoto(false)}><Camera size={22} />Choose photo</button>
         </div>
       )}
-      {!done && usage.videos === 0 && usage.photos === 0 && <p class="vlog-card-hint">Your first post decides: videos or photos.</p>}
+      {!done && <p class="vlog-card-hint">A video counts as 2 photos.</p>}
     </div>
   );
 }

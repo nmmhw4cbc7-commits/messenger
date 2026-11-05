@@ -2462,3 +2462,4 @@ button.vlog-reaction:active { transform: scale(0.94); }
 
 /* Typing indicator */
 .chat-header-sub.typing, .chat-row-preview.typing { color: var(--signal); font-style: italic; }
+.vlog-action em { font-style: normal; font-size: 11.5px; font-weight: 500; opacity: 0.8; }
