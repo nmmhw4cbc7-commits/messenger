@@ -240,7 +240,7 @@ async function register(page, national, e164, name, prefix) {
   await a.getByRole('button', { name: /Ben Okafor, show info/ }).click();
   await sleep(600);
   await shot(a, 'a-08-contact-info');
-  await a.getByText('Safety number').first().click();
+  await a.locator('.stack-item.top .cell-title', { hasText: 'Safety number' }).click();
   await a.locator('.safety-grid').waitFor();
   await sleep(500);
   await shot(a, 'a-09-safety');
@@ -255,7 +255,7 @@ async function register(page, national, e164, name, prefix) {
   // B's safety number must match A's
   await b.getByRole('button', { name: /Anna Berger, show info/ }).click();
   await sleep(500);
-  await b.getByText('Safety number').first().click();
+  await b.locator('.stack-item.top .cell-title', { hasText: 'Safety number' }).click();
   await b.locator('.safety-grid').waitFor();
   const numB = await b.locator('.safety-grid').innerText();
   if (numA !== numB) throw new Error(`safety numbers differ:\n${numA}\n${numB}`);
