@@ -8,6 +8,8 @@ export interface Me {
   avatarVersion: number;
   keyVersion: number;
   hasPin: boolean;
+  /** Secret name of this user's realtime channel. */
+  inbox: string;
 }
 
 export interface Profile {

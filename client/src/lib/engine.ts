@@ -56,38 +56,54 @@ function endSession() {
 async function saveMe(me: Me) {
   await idb.put('meta', me, 'me');
   setState((s) => ({ me, phase: s.phase === 'ready' || s.phase === 'profile' ? (me.name ? 'ready' : 'profile') : s.phase }));
+  if (wanted && me.inbox !== socketInbox) connect();
 }
 
 // ------------------------------------------------------------------ sign in
 
-export async function requestCode(phone: string) {
-  return api<{ phone: string; resendAfter: number }>('POST', '/api/auth/start', { phone });
+export interface Verification {
+  phone: string;
+  verifyId: string;
+  pollSecret: string;
+  telegramUrl: string;
+  expiresAt: number;
 }
 
-type VerifyResponse = { status: 'ok'; isNew: boolean; me: Me } | { status: 'pin_required'; challenge: string };
+type VerifyResponse = { status: 'ok'; isNew: boolean; me: Me } | { status: 'pin_required'; challenge: string } | { status: 'pending' };
 
 let pendingIdentity: Identity | null = null;
 let pendingIsStored = false;
 
-/** Check the SMS code. Keys for a new number are made in memory and only stored once the code is right. */
-export async function verifyCode(phone: string, code: string): Promise<{ pinChallenge?: string }> {
+/**
+ * Start phone verification. Keys for a new number are made in memory now and
+ * only stored once the number is confirmed.
+ */
+export async function startVerification(phone: string): Promise<Verification> {
+  const res = await api<Verification>('POST', '/api/auth/start', { phone });
   const stored = (await idb.get<Identity>('meta', 'identity')) ?? null;
-  pendingIsStored = Boolean(stored && stored.phone === phone);
-  pendingIdentity = pendingIsStored && stored ? stored : await createIdentity(phone);
+  pendingIsStored = Boolean(stored && stored.phone === res.phone);
+  pendingIdentity = pendingIsStored && stored ? stored : await createIdentity(res.phone);
+  return res;
+}
+
+/** Ask whether the number was confirmed in Telegram yet. */
+export async function checkVerification(v: Verification): Promise<'pending' | 'done' | { pinChallenge: string }> {
+  if (!pendingIdentity) throw new Error('Please start again.');
   const res = await api<VerifyResponse>('POST', '/api/auth/verify', {
-    phone,
-    code,
+    verifyId: v.verifyId,
+    pollSecret: v.pollSecret,
     encPub: pendingIdentity.encPub,
     sigPub: pendingIdentity.sigPub,
   });
+  if (res.status === 'pending') return 'pending';
   if (res.status === 'pin_required') return { pinChallenge: res.challenge };
   await finishSignIn(res.me);
-  return {};
+  return 'done';
 }
 
 export async function submitPin(challenge: string, pin: string) {
   const res = await api<VerifyResponse>('POST', '/api/auth/pin', { challenge, pin });
-  if (res.status !== 'ok') throw new Error('Unexpected response');
+  if (res.status !== 'ok') throw new Error('Please start again.');
   await finishSignIn(res.me);
 }
 
@@ -652,10 +668,18 @@ async function processBatch(batch: SyncMessage[]) {
 
 // ------------------------------------------------------------------ realtime
 
+// Live updates come over Supabase Realtime: a broadcast channel whose name is
+// a per-user secret. Hints carry no data; the app then syncs over the API.
+const RT_BASE = (import.meta.env.VITE_SUPABASE_URL as string).replace(/^http/, 'ws');
+const RT_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+
 let socket: WebSocket | null = null;
+let socketInbox = '';
 let retryTimer: number | undefined;
+let heartbeat: number | undefined;
 let backoff = 1000;
 let wanted = false;
+let ref = 0;
 
 function startRealtime() {
   wanted = true;
@@ -665,42 +689,63 @@ function startRealtime() {
 function stopRealtime() {
   wanted = false;
   clearTimeout(retryTimer);
+  clearInterval(heartbeat);
   socket?.close();
   socket = null;
 }
 
 function connect() {
-  if (!wanted || (socket && socket.readyState <= 1)) return;
+  const inbox = getState().me?.inbox;
+  if (!wanted || !inbox) return;
+  if (socket && socket.readyState <= 1 && socketInbox === inbox) return;
+  if (socket) {
+    const old = socket;
+    socket = null;
+    old.close();
+  }
   clearTimeout(retryTimer);
-  const ws = new WebSocket(`${location.origin.replace(/^http/, 'ws')}/api/ws`);
+  clearInterval(heartbeat);
+  const topic = `realtime:inbox:${inbox}`;
+  const ws = new WebSocket(`${RT_BASE}/realtime/v1/websocket?apikey=${encodeURIComponent(RT_KEY)}&vsn=1.0.0`);
   socket = ws;
+  socketInbox = inbox;
+  const joinRef = String(++ref);
+  const sendFrame = (frame: object) => ws.readyState === 1 && ws.send(JSON.stringify(frame));
+
   ws.onopen = () => {
-    backoff = 1000;
-    setState({ connected: true });
-    sync();
-    flushOutbox();
+    sendFrame({ topic, event: 'phx_join', payload: { config: { broadcast: { self: false, ack: false }, presence: { key: '' }, private: false } }, ref: joinRef, join_ref: joinRef });
+    heartbeat = window.setInterval(() => sendFrame({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: String(++ref) }), 25_000);
   };
   ws.onmessage = (e) => {
-    let data: { t?: string };
+    let msg: { event?: string; ref?: string; payload?: { status?: string; event?: string } };
     try {
-      data = JSON.parse(String(e.data));
+      msg = JSON.parse(String(e.data));
     } catch {
       return;
     }
-    if (data.t === 'sync') sync();
-    else if (data.t === 'conversations' || data.t === 'profiles') refreshConversations().catch(() => {});
-  };
-  ws.onclose = (e) => {
-    if (socket !== ws) return;
-    socket = null;
-    setState({ connected: false });
-    if (!wanted) return;
-    if (e.code === 4001) {
-      // Ask the API whether the session is really gone; a 401 ends it.
-      api('GET', '/api/me').then(() => scheduleReconnect(), () => {});
+    if (msg.event === 'phx_reply' && msg.ref === joinRef) {
+      if (msg.payload?.status === 'ok') {
+        backoff = 1000;
+        setState({ connected: true });
+        sync();
+        flushOutbox();
+      } else {
+        ws.close();
+      }
       return;
     }
-    scheduleReconnect();
+    if (msg.event !== 'broadcast') return;
+    const kind = msg.payload?.event;
+    if (kind === 'sync') sync();
+    else if (kind === 'conversations' || kind === 'profiles') refreshConversations().catch(() => {});
+    else if (kind === 'signout') api('GET', '/api/me').catch(() => {});
+  };
+  ws.onclose = () => {
+    if (socket !== ws) return;
+    socket = null;
+    clearInterval(heartbeat);
+    setState({ connected: false });
+    if (wanted) scheduleReconnect();
   };
 }
 
@@ -709,6 +754,11 @@ function scheduleReconnect() {
   retryTimer = window.setTimeout(connect, backoff);
   backoff = Math.min(backoff * 2, 30_000);
 }
+
+// Safety net: sync now and then even if a realtime hint was missed.
+window.setInterval(() => {
+  if (wanted && document.visibilityState === 'visible') sync();
+}, 30_000);
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || !wanted) return;

@@ -1394,3 +1394,23 @@ button.plain-row:active { background: var(--press); transition: none; }
   .stack { background: var(--bg-grouped); }
   .sheet-layer.card .sheet, .sheet-layer.full .sheet { max-width: 600px; margin: 0 auto; }
 }
+
+/* Telegram confirmation */
+.form-icon.telegram { background: rgba(42, 171, 238, 0.14); color: #229ed9; }
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.steps li { display: flex; align-items: center; gap: 12px; font-size: 16px; line-height: 1.35; }
+.steps li span {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 14px;
+  font-weight: 700;
+}
+.waiting { display: flex; align-items: center; gap: 8px; margin-top: 22px; color: var(--text-2); font-size: 15px; }
+.btn-link { text-decoration: none; }
+.btn-link:active { background: var(--accent-press); transform: scale(0.98); }

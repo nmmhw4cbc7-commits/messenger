@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { Button, Screen, Avatar, useAsync, toast } from '../ui/components';
+import { Button, Screen, Avatar, Spinner, useAsync } from '../ui/components';
 import { PhoneField, type PhoneValue } from '../ui/PhoneField';
-import { useNav } from '../ui/nav';
+import { goBack, useNav } from '../ui/nav';
 import { Lock, Camera, Shield, Key } from '../ui/icons';
 import { guessCountry, toE164, prettyPhone } from '../lib/phone';
-import { requestCode, verifyCode, submitPin, forgetDevice, updateProfile, uploadAvatar, avatarUrl } from '../lib/engine';
-import { ApiError, errorMessage } from '../lib/api';
+import { startVerification, checkVerification, submitPin, forgetDevice, updateProfile, uploadAvatar, avatarUrl, type Verification } from '../lib/engine';
+import { errorMessage } from '../lib/api';
 import { useStore } from '../lib/store';
 import { prepareAvatar } from '../lib/image';
 import { parsePhoneNumberFromString } from 'libphonenumber-js/min';
@@ -63,8 +63,8 @@ function PhoneScreen({ initial }: { initial?: PhoneValue }) {
     }
     setError('');
     run(async () => {
-      const res = await requestCode(e164);
-      nav.push(<CodeScreen phone={res.phone} resendAfter={res.resendAfter} />);
+      const verification = await startVerification(e164);
+      nav.push(<TelegramScreen verification={verification} />);
     }, (err) => setError(errorMessage(err)));
   };
 
@@ -72,92 +72,100 @@ function PhoneScreen({ initial }: { initial?: PhoneValue }) {
     <Screen back>
       <div class="form-page">
         <h1 class="form-title">Your phone number</h1>
-        <p class="form-lede">We’ll send you a text with a verification code.</p>
+        <p class="form-lede">You’ll confirm it with one tap in Telegram. Free, and no code to type.</p>
         <PhoneField value={value} onChange={(v) => { setValue(v); setError(''); }} autoFocus onSubmit={submit} />
         <p class={`form-error${error ? ' shown' : ''}`} role="alert">{error}</p>
         <div class="form-spacer" />
         <Button onClick={submit} loading={busy} disabled={!value.national}>Continue</Button>
-        <p class="fine-print">Your number is used to sign in and so friends can find you. Carrier rates may apply.</p>
+        <p class="fine-print">Use the number of your Telegram account. It’s used to sign in and so friends can find you.</p>
       </div>
     </Screen>
   );
 }
 
-function CodeScreen({ phone, resendAfter }: { phone: string; resendAfter: number }) {
+function TelegramScreen({ verification }: { verification: Verification }) {
   const nav = useNav();
-  const [code, setCode] = useState('');
   const [error, setError] = useState('');
-  const [wait, setWait] = useState(resendAfter);
-  const [busy, run] = useAsync();
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [opened, setOpened] = useState(false);
+  const [left, setLeft] = useState(Math.max(0, Math.round((verification.expiresAt - Date.now()) / 1000)));
+  const busy = useRef(false);
+  const done = useRef(false);
+
+  // Ask the server every 2 seconds (and right when the user comes back) whether Telegram confirmed the number.
+  useEffect(() => {
+    const check = async () => {
+      if (busy.current || done.current || error) return;
+      busy.current = true;
+      try {
+        const res = await checkVerification(verification);
+        if (res === 'done') done.current = true;
+        else if (res !== 'pending') {
+          done.current = true;
+          nav.push(<PinScreen challenge={res.pinChallenge} />);
+        }
+      } catch (err) {
+        done.current = true;
+        setError(errorMessage(err));
+      } finally {
+        busy.current = false;
+      }
+    };
+    const timer = setInterval(check, 2000);
+    const onVisible = () => document.visibilityState === 'visible' && check();
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [error]);
 
   useEffect(() => {
-    if (wait <= 0) return;
-    const t = setTimeout(() => setWait((w) => w - 1), 1000);
+    if (left <= 0) return;
+    const t = setTimeout(() => setLeft(Math.max(0, Math.round((verification.expiresAt - Date.now()) / 1000))), 1000);
     return () => clearTimeout(t);
-  }, [wait]);
+  }, [left]);
 
-  const submit = (value: string) => {
-    run(async () => {
-      const res = await verifyCode(phone, value);
-      if (res.pinChallenge) nav.push(<PinScreen challenge={res.pinChallenge} />);
-    }, (err) => {
-      setError(errorMessage(err));
-      setCode('');
-      navigator.vibrate?.(30);
-      inputRef.current?.focus();
-    });
-  };
-
-  const resend = () => {
-    run(async () => {
-      const res = await requestCode(phone);
-      setWait(res.resendAfter);
-      setError('');
-      toast('A new code is on its way.');
-    }, (err) => {
-      setError(errorMessage(err));
-      if (err instanceof ApiError && typeof err.data.retryAfter === 'number') setWait(err.data.retryAfter);
-    });
-  };
+  const expired = left <= 0 && !done.current;
 
   return (
     <Screen back>
       <div class="form-page">
-        <h1 class="form-title">Enter the code</h1>
-        <p class="form-lede">Sent to <strong class="nowrap">{prettyPhone(phone)}</strong></p>
-        <div class={`code-boxes${error ? ' error' : ''}`} onClick={() => inputRef.current?.focus()}>
-          <input
-            ref={inputRef}
-            class="code-input"
-            type="text"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            pattern="[0-9]*"
-            maxLength={6}
-            autoFocus
-            aria-label="Verification code"
-            value={code}
-            disabled={busy}
-            onInput={(e) => {
-              const v = (e.target as HTMLInputElement).value.replace(/\D/g, '').slice(0, 6);
-              setCode(v);
-              setError('');
-              if (v.length === 6) submit(v);
-            }}
-          />
-          {Array.from({ length: 6 }, (_, i) => (
-            <span key={i} class={`code-box${i === code.length && !busy ? ' current' : ''}${code[i] ? ' filled' : ''}`}>{code[i] ?? ''}</span>
-          ))}
-        </div>
-        <p class={`form-error${error ? ' shown' : ''}`} role="alert">{error}</p>
-        <div class="code-actions">
-          <button class="link-button" onClick={resend} disabled={wait > 0 || busy}>
-            {wait > 0 ? `Resend code in 0:${String(wait).padStart(2, '0')}` : 'Resend code'}
-          </button>
-        </div>
+        <div class="form-icon telegram"><TelegramIcon /></div>
+        <h1 class="form-title">Confirm in Telegram</h1>
+        <p class="form-lede">
+          Confirm <strong class="nowrap">{prettyPhone(verification.phone)}</strong> with your Telegram account. Telegram only shares this number, nothing else.
+        </p>
+        <ol class="steps">
+          <li><span>1</span>Tap “Open Telegram”</li>
+          <li><span>2</span>Tap <strong>Start</strong>, then <strong>Share my phone number</strong></li>
+          <li><span>3</span>Come back here. Haven continues on its own</li>
+        </ol>
+        {error || expired ? (
+          <p class="form-error shown" role="alert">{error || 'This confirmation expired.'}</p>
+        ) : opened ? (
+          <p class="waiting"><Spinner size={16} /> Waiting for Telegram…</p>
+        ) : null}
+        <div class="form-spacer" />
+        {error || expired ? (
+          <Button onClick={() => goBack()}>Start again</Button>
+        ) : (
+          <a class="btn btn-primary btn-link" href={verification.telegramUrl} target="_blank" rel="noopener noreferrer" onClick={() => setOpened(true)}>
+            <span class="btn-label"><TelegramIcon size={20} /> Open Telegram</span>
+          </a>
+        )}
+        <p class="fine-print">
+          No Telegram yet? Get it free from the App Store or Google Play, then come back. {left > 0 && !error ? `Link valid for ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}.` : ''}
+        </p>
       </div>
     </Screen>
+  );
+}
+
+function TelegramIcon({ size = 28 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M21.4 4.2 2.9 11.4c-1.3.5-1.2 1.3-.2 1.6l4.7 1.5 1.8 5.6c.2.6.4.8.9.8.4 0 .6-.2.9-.4l2.3-2.2 4.7 3.5c.9.5 1.5.2 1.7-.8l3.1-14.7c.3-1.3-.5-1.9-1.4-1.5ZM9.6 14.3l-.4 4.1-1.4-4.5 10-6.3c.5-.3.9-.1.5.2Z" />
+    </svg>
   );
 }
 
