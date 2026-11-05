@@ -386,6 +386,116 @@ export function openViewer(msg: Msg, url: string, onClosed?: () => void) {
 }
 
 function Viewer({ msg, url, close }: { msg: Msg; url: string; close: () => Promise<void> }) {
+  if (msg.media?.viewOnce) return <OnceViewer url={url} close={close} />;
+  return <MediaViewer msg={msg} url={url} close={close} />;
+}
+
+const ONCE_SECONDS = 10;
+
+/**
+ * View-once photo. A web app cannot block screenshots, so this makes them as hard and as
+ * traceable as possible: the photo only shows while a finger holds it, it is drawn on a canvas
+ * (no "save image"), it hides as soon as the app loses focus, it carries the viewer's name and
+ * number as a watermark, and it closes for good after 10 seconds of viewing.
+ */
+function OnceViewer({ url, close }: { url: string; close: () => Promise<void> }) {
+  const me = useStore((s) => s.me);
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const [holding, setHolding] = useState(false);
+  const [hidden, setHidden] = useState(false);
+  const [spent, setSpent] = useState(0);
+  const closed = useRef(false);
+
+  // Draw the photo with a watermark into the canvas once.
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => {
+      const c = canvas.current;
+      if (!c) return;
+      const scale = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+      c.width = Math.round(img.naturalWidth * scale);
+      c.height = Math.round(img.naturalHeight * scale);
+      const ctx = c.getContext('2d')!;
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      const mark = `${me?.name ?? ''} · ${prettyPhone(me?.phone ?? '')} · ${new Date().toLocaleString()}`;
+      ctx.save();
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = '#fff';
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+      ctx.lineWidth = 2;
+      const size = Math.max(14, Math.round(c.width / 28));
+      ctx.font = `600 ${size}px sans-serif`;
+      ctx.translate(c.width / 2, c.height / 2);
+      ctx.rotate(-Math.PI / 6);
+      const step = size * 4;
+      for (let y = -c.height; y < c.height; y += step) {
+        for (let x = -c.width * 1.2; x < c.width * 1.2; x += ctx.measureText(mark).width + size * 3) {
+          ctx.strokeText(mark, x, y);
+          ctx.fillText(mark, x, y);
+        }
+      }
+      ctx.restore();
+    };
+    img.src = url;
+  }, [url]);
+
+  // Hide the moment the app is not in front (app switcher, notification centre, other apps).
+  useEffect(() => {
+    const hide = () => { setHidden(true); setHolding(false); };
+    const show = () => { if (document.visibilityState === 'visible') setHidden(false); };
+    const onVisibility = () => (document.visibilityState === 'visible' ? show() : hide());
+    window.addEventListener('blur', hide);
+    window.addEventListener('focus', show);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('blur', hide);
+      window.removeEventListener('focus', show);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
+
+  // Count viewing time while held; close for good after the limit.
+  useEffect(() => {
+    if (!holding || hidden) return;
+    const t = setInterval(() => setSpent((v) => v + 0.1), 100);
+    return () => clearInterval(t);
+  }, [holding, hidden]);
+  useEffect(() => {
+    if (spent >= ONCE_SECONDS && !closed.current) {
+      closed.current = true;
+      close();
+    }
+  }, [spent]);
+
+  const visible = holding && !hidden;
+  const stop = (e: Event) => e.preventDefault();
+
+  return (
+    <div class="viewer once-viewer" onContextMenu={stop}>
+      <button class="viewer-close" onClick={() => close()} aria-label="Close"><Close size={22} /></button>
+      <div
+        class="once-stage"
+        onPointerDown={(e) => { e.preventDefault(); setHolding(true); }}
+        onPointerUp={() => setHolding(false)}
+        onPointerCancel={() => setHolding(false)}
+        onPointerLeave={() => setHolding(false)}
+      >
+        <canvas ref={canvas} class={visible ? 'shown' : ''} aria-label="View-once photo" />
+        {!visible && (
+          <div class="once-cover">
+            <span class="once-cover-icon"><Once size={28} /></span>
+            <strong>Hold to view</strong>
+            <span>{Math.max(0, Math.ceil(ONCE_SECONDS - spent))} seconds left · opens once</span>
+          </div>
+        )}
+        <div class="once-progress" aria-hidden="true"><span style={{ width: `${Math.min(100, (spent / ONCE_SECONDS) * 100)}%` }} /></div>
+      </div>
+      <p class="once-note">Please don’t screenshot. Your name and number are shown on the photo.</p>
+    </div>
+  );
+}
+
+function MediaViewer({ msg, url, close }: { msg: Msg; url: string; close: () => Promise<void> }) {
   const media = msg.media!;
   const ref = useRef<HTMLDivElement>(null);
   const onPointerDown = (e: PointerEvent) => {
