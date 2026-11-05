@@ -4,7 +4,8 @@
 import { api, ApiError, sessionEvents } from './api';
 import * as idb from './idb';
 import { createIdentity, decryptMessage, encryptMessage, randomId, type Envelope, type Identity } from './crypto';
-import { getState, setState, type Conv, type Me, type Member, type Msg, type Pin, type Profile, type SystemBody, type Theme } from './store';
+import { getState, setState, type Conv, type Me, type Member, type Msg, type Pin, type Profile, type ReplyRef, type SystemBody, type Theme } from './store';
+import type { Payload } from './crypto';
 
 let identity: Identity | null = null;
 const MAX_TEXT = 4000;
@@ -128,7 +129,7 @@ async function finishSignIn(me: Me) {
 
 // ------------------------------------------------------------------ profile
 
-export async function updateProfile(patch: { name?: string; about?: string }) {
+export async function updateProfile(patch: { name?: string; about?: string; readReceipts?: boolean }) {
   const res = await api<{ me: Me }>('PATCH', '/api/me', patch);
   await saveMe(res.me);
 }
@@ -455,6 +456,7 @@ async function addMessages(msgs: Msg[], countUnread: boolean) {
   await idb.putMany('convs', touched);
   setState({ messages, convs });
   updateBadge();
+  if (countUnread && s.openConvId && visible && msgs.some((m) => m.convId === s.openConvId)) sendReadReceipt(s.openConvId);
 }
 
 async function updateMessage(msg: Msg) {
@@ -472,6 +474,7 @@ async function updateMessage(msg: Msg) {
 }
 
 export async function markRead(convId: string) {
+  sendReadReceipt(convId);
   const conv = getState().convs[convId];
   if (!conv || (conv.unread === 0 && conv.lastReadAt > (conv.last?.sortKey ?? 0))) return;
   await saveConv({ ...conv, unread: 0, lastReadAt: Date.now() });
@@ -492,11 +495,12 @@ function updateBadge() {
 
 // ------------------------------------------------------------------ sending
 
-export async function sendText(convId: string, raw: string) {
+export async function sendText(convId: string, raw: string, reply?: ReplyRef) {
   const text = raw.replace(/\s+$/, '').replace(/^\s*\n/, '').slice(0, MAX_TEXT);
   if (!text.trim() || !getState().me) return;
   const now = Date.now();
   const msg: Msg = { id: randomId(), convId, senderId: getState().me!.id, kind: 'text', text, createdAt: now, sortKey: now, status: 'pending' };
+  if (reply) msg.reply = { id: reply.id, senderId: reply.senderId, text: reply.text.slice(0, 200) };
   await addMessages([msg], false);
   await addToOutbox(msg.id);
   flushOutbox();
@@ -559,7 +563,8 @@ async function deliver(msg: Msg): Promise<'sent' | 'failed' | 'offline' | 'pause
     const others = conv.members.filter((m) => m.id !== me.id);
     if (others.some((m) => getState().pins[m.id]?.needsAck)) return 'paused';
     try {
-      const envelope = await encryptMessage(identity, me.id, conv.id, msg.id, { type: 'text', text: msg.text ?? '' },
+      const payload: Payload = msg.reply ? { type: 'text', text: msg.text ?? '', reply: msg.reply } : { type: 'text', text: msg.text ?? '' };
+      const envelope = await encryptMessage(identity, me.id, conv.id, msg.id, payload,
         others.map((m) => ({ id: m.id, encPub: m.encPub, keyVersion: m.keyVersion })));
       const res = await api<{ id: string; createdAt: number }>('POST', `/api/conversations/${conv.id}/messages`, { id: msg.id, envelope });
       await updateMessage({ ...msg, status: 'sent', createdAt: res.createdAt });
@@ -579,6 +584,75 @@ async function deliver(msg: Msg): Promise<'sent' | 'failed' | 'offline' | 'pause
   }
   await updateMessage({ ...msg, status: 'failed' });
   return 'failed';
+}
+
+// ------------------------------------------------------------------ reactions
+
+/** Encrypt and send a control payload (reactions) right away. */
+async function sendPayload(convId: string, payload: Payload) {
+  const me = getState().me;
+  if (!me || !identity) throw new Error('You are offline.');
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const conv = getState().convs[convId];
+    if (!conv || conv.left) throw new Error('This chat is no longer available.');
+    const others = conv.members.filter((m) => m.id !== me.id);
+    const id = randomId();
+    const envelope = await encryptMessage(identity, me.id, conv.id, id, payload, others.map((m) => ({ id: m.id, encPub: m.encPub, keyVersion: m.keyVersion })));
+    try {
+      await api('POST', `/api/conversations/${conv.id}/messages`, { id, envelope });
+      return;
+    } catch (err) {
+      if (err instanceof ApiError && (err.code === 'members_changed' || err.code === 'keys_changed')) {
+        await refreshConversations().catch(() => {});
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+async function applyReaction(targetId: string, userId: string, emoji: string) {
+  const msg = await idb.get<Msg>('messages', targetId);
+  if (!msg) return;
+  const reactions = { ...(msg.reactions ?? {}) };
+  if (emoji) reactions[userId] = emoji;
+  else delete reactions[userId];
+  await updateMessage({ ...msg, reactions });
+}
+
+/** React to a message; picking the same emoji again removes the reaction. */
+export async function react(msg: Msg, emoji: string) {
+  const me = getState().me;
+  if (!me) return;
+  const next = msg.reactions?.[me.id] === emoji ? '' : emoji;
+  await applyReaction(msg.id, me.id, next);
+  await sendPayload(msg.convId, { type: 'reaction', target: msg.id, emoji: next });
+}
+
+// ------------------------------------------------------------------ read receipts
+
+const sentReadAt: Record<string, number> = {};
+
+/** Tell the others how far this chat has been read (only if read receipts are on). */
+function sendReadReceipt(convId: string) {
+  const s = getState();
+  if (!s.me || s.me.readReceipts === false) return;
+  const list = s.messages[convId];
+  const conv = s.convs[convId];
+  if (!conv || conv.left) return;
+  const fromOthers = (list ?? (conv.last ? [conv.last] : [])).filter((m) => m.senderId && m.senderId !== s.me!.id && m.status === 'received');
+  const at = fromOthers.reduce((max, m) => Math.max(max, m.createdAt), 0);
+  if (!at || at <= (sentReadAt[convId] ?? 0)) return;
+  sentReadAt[convId] = at;
+  api('POST', `/api/conversations/${convId}/read`, { at }).catch(() => {
+    sentReadAt[convId] = 0;
+  });
+}
+
+/** True if every other member has read up to this message. */
+export function isReadByAll(msg: Msg, conv: Conv, meId: string) {
+  const others = conv.members.filter((m) => m.id !== meId);
+  return others.length > 0 && others.every((m) => (m.lastReadAt ?? 0) >= msg.createdAt);
 }
 
 // ------------------------------------------------------------------ receiving
@@ -636,6 +710,7 @@ async function processBatch(batch: SyncMessage[]) {
   };
 
   const out: Msg[] = [];
+  const reactions: { target: string; userId: string; emoji: string }[] = [];
   for (const m of batch) {
     if (await idb.get('messages', m.id)) continue;
 
@@ -657,13 +732,22 @@ async function processBatch(batch: SyncMessage[]) {
       await ensureFresh();
       result = await tryDecrypt();
     }
-    out.push(result.ok
-      ? { id: m.id, convId: m.conversationId, senderId: m.senderId, kind: 'text', text: result.payload.text, createdAt: m.createdAt, sortKey: m.createdAt, status: 'received' }
-      : { id: m.id, convId: m.conversationId, senderId: m.senderId, kind: 'undecryptable', createdAt: m.createdAt, sortKey: m.createdAt, status: 'received' });
+    if (result.ok && result.payload.type === 'reaction') {
+      reactions.push({ target: result.payload.target, userId: m.senderId!, emoji: result.payload.emoji });
+      continue;
+    }
+    if (result.ok && result.payload.type === 'text') {
+      const msg: Msg = { id: m.id, convId: m.conversationId, senderId: m.senderId, kind: 'text', text: result.payload.text, createdAt: m.createdAt, sortKey: m.createdAt, status: 'received' };
+      if (result.payload.reply) msg.reply = result.payload.reply;
+      out.push(msg);
+    } else {
+      out.push({ id: m.id, convId: m.conversationId, senderId: m.senderId, kind: 'undecryptable', createdAt: m.createdAt, sortKey: m.createdAt, status: 'received' });
+    }
   }
 
   if (refreshAfter) await refreshConversations().catch(() => {});
   await addMessages(out, true);
+  for (const r of reactions) await applyReaction(r.target, r.userId, r.emoji);
 }
 
 // ------------------------------------------------------------------ realtime
@@ -737,7 +821,7 @@ function connect() {
     if (msg.event !== 'broadcast') return;
     const kind = msg.payload?.event;
     if (kind === 'sync') sync();
-    else if (kind === 'conversations' || kind === 'profiles') refreshConversations().catch(() => {});
+    else if (kind === 'conversations' || kind === 'profiles' || kind === 'read') refreshConversations().catch(() => {});
     else if (kind === 'signout') api('GET', '/api/me').catch(() => {});
   };
   ws.onclose = () => {

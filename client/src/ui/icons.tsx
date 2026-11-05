@@ -160,3 +160,15 @@ export const Exit = (p: P) => (
   </I>
 );
 export const Star = (p: P) => <I {...p}><path d="m12 4 2.4 5 5.4.6-4 3.7 1.1 5.4L12 16l-4.8 2.7 1-5.4-4-3.7 5.5-.6Z" /></I>;
+export const CheckDouble = (p: P) => (
+  <I {...p}>
+    <path d="m2.5 12.5 4.5 4.5 9-9.5" />
+    <path d="m12 16.2.8.8 9-9.5" />
+  </I>
+);
+export const Reply = (p: P) => (
+  <I {...p}>
+    <path d="M9.5 6.5 4 12l5.5 5.5" />
+    <path d="M4.5 12H14a6 6 0 0 1 6 6v.5" />
+  </I>
+);

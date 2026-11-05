@@ -10,6 +10,7 @@ export interface Me {
   hasPin: boolean;
   /** Secret name of this user's realtime channel. */
   inbox: string;
+  readReceipts: boolean;
 }
 
 export interface Profile {
@@ -25,6 +26,14 @@ export interface Profile {
 
 export interface Member extends Profile {
   role: 'admin' | 'member';
+  /** Server time up to which this member has read the chat (0 if they hide it). */
+  lastReadAt: number;
+}
+
+export interface ReplyRef {
+  id: string;
+  senderId: string;
+  text: string;
 }
 
 export interface SystemBody {
@@ -43,6 +52,9 @@ export interface Msg {
   text?: string;
   system?: SystemBody;
   notice?: { type: 'key_changed'; userId: string; name: string };
+  reply?: ReplyRef;
+  /** userId -> emoji */
+  reactions?: Record<string, string>;
   createdAt: number;
   sortKey: number;
   status: 'pending' | 'sent' | 'failed' | 'received';

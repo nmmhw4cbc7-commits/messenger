@@ -10,7 +10,7 @@ import { parsePhoneNumberFromString } from 'libphonenumber-js/min';
 import { errorMessage } from '../lib/api';
 import { Avatar, Button, Cell, Screen, Section, Segmented, Spinner, Toggle, NavButton, actionSheet, confirmAction, toast, useAsync, Empty } from '../ui/components';
 import { goBack, useNav } from '../ui/nav';
-import { Bell, Block, Camera, Lock, Logout, Moon, Shield, Trash, Info } from '../ui/icons';
+import { Bell, Block, Camera, Lock, Logout, Moon, Shield, Trash, Info, CheckDouble } from '../ui/icons';
 
 export function SettingsTab() {
   const nav = useNav();
@@ -30,8 +30,14 @@ export function SettingsTab() {
         </button>
       </Section>
 
-      <Section header="Privacy & security">
+      <Section header="Privacy & security" footer="With read receipts off, others don’t see when you read their messages.">
         <Cell icon={<Lock size={19} />} iconBg="ink" title="Registration lock" value={me.hasPin ? 'On' : 'Off'} chevron onClick={() => nav.push(<RegistrationLock />)} />
+        <Cell
+          icon={<CheckDouble size={19} />}
+          iconBg="ink"
+          title="Read receipts"
+          right={<Toggle label="Read receipts" checked={me.readReceipts !== false} onChange={(v) => updateProfile({ readReceipts: v }).catch((err) => toast(errorMessage(err), 'error'))} />}
+        />
         <Cell icon={<Block size={19} />} iconBg="ink" title="Blocked people" chevron onClick={() => nav.push(<BlockedPeople />)} />
         <Cell icon={<Shield size={19} />} iconBg="ink" title="How Haven protects you" chevron onClick={() => nav.push(<SecurityInfo />)} />
       </Section>

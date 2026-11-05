@@ -89,9 +89,28 @@ export interface Envelope {
   keys: Record<string, { kv: number; iv: string; k: string }>;
 }
 
-export interface Payload {
-  type: 'text';
-  text: string;
+export type Payload =
+  | { type: 'text'; text: string; reply?: { id: string; senderId: string; text: string } }
+  | { type: 'reaction'; target: string; emoji: string };
+
+const ID = /^[A-Za-z0-9_-]{16,40}$/;
+
+/** Accept only well-formed payloads; anything else is treated as corrupt. */
+function cleanPayload(p: unknown): Payload | null {
+  if (!p || typeof p !== 'object') return null;
+  const o = p as Record<string, unknown>;
+  if (o.type === 'text' && typeof o.text === 'string') {
+    const out: Payload = { type: 'text', text: o.text.slice(0, 8000) };
+    const r = o.reply as Record<string, unknown> | undefined;
+    if (r && typeof r.id === 'string' && ID.test(r.id) && typeof r.senderId === 'string' && ID.test(r.senderId) && typeof r.text === 'string') {
+      out.reply = { id: r.id, senderId: r.senderId, text: r.text.slice(0, 200) };
+    }
+    return out;
+  }
+  if (o.type === 'reaction' && typeof o.target === 'string' && ID.test(o.target) && typeof o.emoji === 'string' && o.emoji.length <= 16) {
+    return { type: 'reaction', target: o.target, emoji: o.emoji };
+  }
+  return null;
 }
 
 const header = (convId: string, senderId: string, msgId: string, ts: number) =>
@@ -194,9 +213,9 @@ export async function decryptMessage(
     const contentKey = await subtle.importKey('raw', contentKeyRaw, 'AES-GCM', false, ['decrypt']);
     new Uint8Array(contentKeyRaw).fill(0);
     const plain = await subtle.decrypt({ name: 'AES-GCM', iv: fromB64u(envelope.iv), additionalData: enc.encode(h) }, contentKey, fromB64u(envelope.ct));
-    const payload = JSON.parse(dec.decode(plain));
-    if (payload?.type !== 'text' || typeof payload.text !== 'string') return { ok: false, reason: 'corrupt' };
-    return { ok: true, payload: { type: 'text', text: payload.text.slice(0, 8000) }, ts: envelope.ts };
+    const payload = cleanPayload(JSON.parse(dec.decode(plain)));
+    if (!payload) return { ok: false, reason: 'corrupt' };
+    return { ok: true, payload, ts: envelope.ts };
   } catch {
     return { ok: false, reason: 'corrupt' };
   }

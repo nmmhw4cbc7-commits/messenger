@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'preact/hooks';
+import { useMemo, useRef, useState } from 'preact/hooks';
 import { useStore, type Conv, type Msg } from '../lib/store';
 import { avatarUrl, convTitle, displayName, otherMember, deleteChat, markRead } from '../lib/engine';
 import { formatListTime } from '../lib/format';
 import { Avatar, Empty, NavButton, Screen, actionSheet, confirmAction } from '../ui/components';
-import { Chats, Compose, Gear, Lock, Search, Clock, Alert } from '../ui/icons';
+import { Chats, Compose, Gear, Lock, Search, Clock, Alert, Check, Trash } from '../ui/icons';
 import { useNav } from '../ui/nav';
 import { ChatScreen } from './Chat';
 import { NewChatSheet } from './NewChat';
@@ -93,36 +93,114 @@ function preview(m: Msg | null, conv: Conv, meId: string | undefined) {
   return prefix + (m.text ?? '').replace(/\s+/g, ' ');
 }
 
+// Only one row can be swiped open at a time.
+let closeOpenRow: (() => void) | null = null;
+const ACTIONS_WIDTH = 160;
+
 function ChatRow({ conv, meId, onOpen }: { conv: Conv; meId?: string; onOpen: () => void }) {
   const other = otherMember(conv, meId);
   const title = convTitle(conv, meId);
   const last = conv.last;
-  let pressTimer: number | undefined;
-  let longPressed = false;
+  const rowRef = useRef<HTMLButtonElement>(null);
+  const offset = useRef(0);
+  const suppressClick = useRef(false);
+
+  const setOffset = (x: number, animate = true) => {
+    const el = rowRef.current;
+    if (!el) return;
+    offset.current = x;
+    el.classList.toggle('dragging', !animate);
+    el.style.transform = x ? `translateX(${x}px)` : '';
+  };
+  const close = () => {
+    setOffset(0);
+    if (closeOpenRow === close) closeOpenRow = null;
+  };
+
+  const confirmDelete = async () => {
+    close();
+    if (await confirmAction({ message: 'Messages in this chat will be deleted from this device.', confirm: 'Delete chat', danger: true })) await deleteChat(conv.id);
+  };
 
   const menu = () => {
     actionSheet([
       ...(conv.unread ? [{ label: 'Mark as read', run: () => markRead(conv.id) }] : []),
-      {
-        label: 'Delete chat',
-        danger: true,
-        run: async () => {
-          if (await confirmAction({ message: 'Messages in this chat will be deleted from this device.', confirm: 'Delete chat', danger: true })) await deleteChat(conv.id);
-        },
-      },
+      { label: 'Delete chat', danger: true, run: confirmDelete },
     ], { title });
+  };
+
+  const onPointerDown = (e: PointerEvent) => {
+    if (e.button !== 0 || e.clientX < 24) return;
+    if (closeOpenRow && closeOpenRow !== close) {
+      closeOpenRow();
+      suppressClick.current = true;
+    }
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    const start = offset.current;
+    let mode: 'pending' | 'drag' | 'none' = 'pending';
+    const timer = window.setTimeout(() => {
+      if (mode !== 'pending') return;
+      mode = 'none';
+      suppressClick.current = true;
+      navigator.vibrate?.(8);
+      menu();
+    }, 500);
+    const move = (ev: PointerEvent) => {
+      if (ev.pointerId !== e.pointerId) return;
+      const dx = ev.clientX - x0;
+      const dy = ev.clientY - y0;
+      if (mode === 'pending') {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+        clearTimeout(timer);
+        mode = Math.abs(dx) > Math.abs(dy) * 1.2 && (dx < 0 || start < 0) ? 'drag' : 'none';
+        if (mode === 'none') return finish();
+      }
+      if (mode !== 'drag') return;
+      let x = Math.min(0, start + dx);
+      if (x < -ACTIONS_WIDTH) x = -ACTIONS_WIDTH + (x + ACTIONS_WIDTH) * 0.3;
+      setOffset(x, false);
+    };
+    const up = () => {
+      clearTimeout(timer);
+      if (mode === 'drag') {
+        suppressClick.current = true;
+        if (offset.current < -ACTIONS_WIDTH / 2.5) {
+          setOffset(-ACTIONS_WIDTH);
+          closeOpenRow = close;
+        } else close();
+      }
+      finish();
+    };
+    const finish = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+    };
+    window.addEventListener('pointermove', move, { passive: true });
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
   };
 
   return (
     <li>
+      <div class="row-actions" aria-hidden={offset.current === 0}>
+        <button class="read" onClick={() => { close(); markRead(conv.id); }}><Check size={20} />Read</button>
+        <button class="delete" onClick={confirmDelete}><Trash size={20} />Delete</button>
+      </div>
       <button
+        ref={rowRef}
         class="chat-row"
-        onClick={() => { if (!longPressed) onOpen(); longPressed = false; }}
+        onPointerDown={onPointerDown}
+        onClick={() => {
+          if (suppressClick.current) {
+            suppressClick.current = false;
+            return;
+          }
+          if (offset.current) return close();
+          onOpen();
+        }}
         onContextMenu={(e) => { e.preventDefault(); menu(); }}
-        onPointerDown={() => { longPressed = false; pressTimer = window.setTimeout(() => { longPressed = true; navigator.vibrate?.(8); menu(); }, 500); }}
-        onPointerUp={() => clearTimeout(pressTimer)}
-        onPointerLeave={() => clearTimeout(pressTimer)}
-        onPointerCancel={() => clearTimeout(pressTimer)}
       >
         <Avatar id={conv.kind === 'group' ? conv.id : other?.id ?? conv.id} name={title} src={other ? avatarUrl(other) : null} size={54} group={conv.kind === 'group'} />
         <span class="chat-row-main">

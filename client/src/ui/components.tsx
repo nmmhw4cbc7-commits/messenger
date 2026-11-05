@@ -229,7 +229,8 @@ export interface Action {
 }
 
 /** iOS-style action sheet. Picking an action closes the sheet first, then runs it. */
-export function actionSheet(actions: Action[], options: { title?: string; message?: string } = {}) {
+export function actionSheet(actions: Action[], options: { title?: string; message?: string; onDismiss?: () => void } = {}) {
+  let picked = false;
   getNav().present(
     (close) => (
       <div class="action-sheet">
@@ -245,6 +246,7 @@ export function actionSheet(actions: Action[], options: { title?: string; messag
               key={a.label}
               class={`action${a.danger ? ' danger' : ''}`}
               onClick={async () => {
+                picked = true;
                 await close();
                 await a.run();
               }}
@@ -260,19 +262,17 @@ export function actionSheet(actions: Action[], options: { title?: string; messag
         </div>
       </div>
     ),
-    { variant: 'action' },
+    { variant: 'action', onClose: () => { if (!picked) options.onDismiss?.(); } },
   );
 }
 
 export function confirmAction(opts: { title?: string; message: string; confirm: string; danger?: boolean }): Promise<boolean> {
   return new Promise((resolve) => {
-    let decided = false;
-    actionSheet([{ label: opts.confirm, danger: opts.danger, run: () => { decided = true; resolve(true); } }], { title: opts.title, message: opts.message });
-    // Resolve false when the sheet is dismissed any other way.
-    const onPop = () => setTimeout(() => {
-      if (!decided) resolve(false);
-    }, 400);
-    window.addEventListener('popstate', onPop, { once: true });
+    actionSheet([{ label: opts.confirm, danger: opts.danger, run: () => resolve(true) }], {
+      title: opts.title,
+      message: opts.message,
+      onDismiss: () => resolve(false),
+    });
   });
 }
 

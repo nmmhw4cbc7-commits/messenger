@@ -184,6 +184,7 @@ const serializeMe = (u: Row) => ({
   keyVersion: u.key_version,
   hasPin: Boolean(u.pin_hash),
   inbox: u.inbox_token,
+  readReceipts: u.read_receipts !== false,
 });
 
 const publicProfile = (u: Row) => ({
@@ -246,7 +247,7 @@ async function currentUser(req: Request, reply: Reply): Promise<Row & { token_ha
 // ------------------------------------------------------------------ realtime & push
 
 /** Tell users' apps to sync. The hint carries no data; the channel name is a per-user secret. */
-async function broadcast(userIds: string[], event: 'sync' | 'conversations' | 'profiles' | 'signout') {
+async function broadcast(userIds: string[], event: 'sync' | 'conversations' | 'profiles' | 'signout' | 'read') {
   if (!userIds.length) return;
   const rows = await sql`select inbox_token from haven.users where id = any(${userIds})`;
   if (!rows.length) return;
@@ -504,7 +505,7 @@ async function hasBlocked(blockerId: string, blockedId: string) {
 async function serializeConversations(convs: Row[], userId: string) {
   if (!convs.length) return [];
   const ids = convs.map((c) => c.id);
-  const members = await sql`select m.conversation_id, m.role, m.joined_at, u.id, u.phone, u.name, u.about, u.avatar_version, u.enc_pub, u.sig_pub, u.key_version
+  const members = await sql`select m.conversation_id, m.role, m.joined_at, m.last_read_at, u.read_receipts, u.id, u.phone, u.name, u.about, u.avatar_version, u.enc_pub, u.sig_pub, u.key_version
                             from haven.members m join haven.users u on u.id = m.user_id
                             where m.conversation_id = any(${ids}) order by m.joined_at, u.id`;
   return convs.map((c) => {
@@ -517,7 +518,8 @@ async function serializeConversations(convs: Row[], userId: string) {
       createdAt: Number(c.created_at),
       updatedAt: Number(c.updated_at),
       myRole: list.find((m) => m.id === userId)?.role ?? 'member',
-      members: list.map((m) => ({ ...publicProfile(m), role: m.role })),
+      // Read positions are only shared by people who keep read receipts on.
+      members: list.map((m) => ({ ...publicProfile(m), role: m.role, lastReadAt: m.read_receipts ? Number(m.last_read_at) : 0 })),
     };
   });
 }
@@ -686,7 +688,10 @@ route('GET', '/me', async ({ req, reply }) => ({ me: serializeMe(await currentUs
 
 route('PATCH', '/me', async ({ req, reply, body }) => {
   const user = await currentUser(req, reply);
-  const b = shape<{ name?: string; about?: string }>(body, { name: [str(0, 200), false], about: [str(0, 500), false] });
+  const b = shape<{ name?: string; about?: string; readReceipts?: boolean }>(body, {
+    name: [str(0, 200), false], about: [str(0, 500), false], readReceipts: [(v) => typeof v === 'boolean', false],
+  });
+  if (b.readReceipts !== undefined) await sql`update haven.users set read_receipts = ${b.readReceipts} where id = ${user.id}`;
   if (b.name !== undefined) {
     const name = cleanLine(b.name, 40);
     if (!name) throw new HttpError(400, 'invalid_name', 'Please enter a name.');
@@ -992,6 +997,20 @@ route('POST', '/conversations/:id/messages', async ({ req, reply, params, body }
     await notifyMessages(recipients);
   }
   return { id: b.id, createdAt: t };
+});
+
+// ---- read receipts
+
+route('POST', '/conversations/:id/read', async ({ req, reply, params, body }) => {
+  const user = await currentUser(req, reply);
+  const { at } = shape<{ at: number }>(body, { at: [int(0), true] });
+  await membershipOrThrow(params.id, user.id);
+  if (user.read_receipts === false) return ok;
+  const upTo = Math.min(at, now());
+  const updated = await sql`update haven.members set last_read_at = ${upTo}
+                            where conversation_id = ${params.id} and user_id = ${user.id} and last_read_at < ${upTo} returning 1`;
+  if (updated.length) await broadcast((await memberIds(params.id)).filter((id) => id !== user.id), 'read');
+  return ok;
 });
 
 // ---- sync

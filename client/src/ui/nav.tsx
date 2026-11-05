@@ -1,6 +1,5 @@
 // Native-style navigation: a stack of screens that slide in from the right,
-// an edge swipe to go back, and bottom sheets. Every layer is mirrored in the
-// browser history, so the Android back button and gestures close the top layer.
+// an edge swipe to go back, and bottom sheets.
 
 import { createContext, type ComponentChildren, type JSX } from 'preact';
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
@@ -12,31 +11,48 @@ const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').match
 
 // ------------------------------------------------------------------ history
 
+// On iPhone and iPad, Safari draws its own swipe-back animation over the page
+// (a white, browser-looking snapshot) whenever there is history to go back to.
+// So there we keep a single history entry and our own edge swipe does the work.
+// Elsewhere every layer is mirrored in the history so the Android back button works.
+const IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const useHistory = !IOS;
+
 type Closer = (animated: boolean) => Promise<void> | void;
 const closers: Closer[] = [];
 let skipNextAnimation = false;
 let backWaiters: (() => void)[] = [];
+let closing: Promise<void> = Promise.resolve();
 
 history.replaceState({ haven: 0 }, '');
 
-window.addEventListener('popstate', async () => {
+async function closeTop(animated: boolean) {
   const closer = closers.pop();
-  const animated = !skipNextAnimation;
-  skipNextAnimation = false;
   if (closer) await closer(animated);
   const waiters = backWaiters;
   backWaiters = [];
   waiters.forEach((w) => w());
+}
+
+window.addEventListener('popstate', () => {
+  if (!useHistory) return;
+  const animated = !skipNextAnimation;
+  skipNextAnimation = false;
+  closeTop(animated);
 });
 
 function openLayer(closer: Closer) {
   closers.push(closer);
-  history.pushState({ haven: closers.length }, '');
+  if (useHistory) history.pushState({ haven: closers.length }, '');
 }
 
 /** Close the top layer (screen or sheet). Resolves when it is gone. */
 export function goBack(animated = true): Promise<void> {
   if (!closers.length) return Promise.resolve();
+  if (!useHistory) {
+    closing = closing.then(() => closeTop(animated));
+    return closing;
+  }
   skipNextAnimation = !animated;
   return new Promise((resolve) => {
     backWaiters.push(resolve);
@@ -44,12 +60,16 @@ export function goBack(animated = true): Promise<void> {
   });
 }
 
+/** Number of open layers (screens above the root, plus sheets). */
+export const openLayers = () => closers.length;
+
 /** Forget all layers, e.g. when switching from sign-in to the main app. */
 export function resetNavigation() {
   closers.length = 0;
   backWaiters = [];
   history.replaceState({ haven: 0 }, '');
 }
+
 
 /** Close several layers, e.g. a sheet and the screen under it. */
 export async function goBackMany(count: number) {
@@ -84,7 +104,7 @@ interface Entry {
 
 interface NavApi {
   push(node: JSX.Element): void;
-  present(render: (close: () => Promise<void>) => JSX.Element, options?: { variant?: SheetVariant }): void;
+  present(render: (close: () => Promise<void>) => JSX.Element, options?: { variant?: SheetVariant; onClose?: () => void }): void;
 }
 
 export type SheetVariant = 'card' | 'full' | 'action';
@@ -142,6 +162,7 @@ export function Navigator({ root }: { root: JSX.Element }) {
           await new Promise((r) => setTimeout(r, reducedMotion() ? 120 : 280));
         }
         setSheets((s) => s.filter((x) => x.key !== key));
+        options?.onClose?.();
       });
     },
   });

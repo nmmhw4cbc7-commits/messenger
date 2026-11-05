@@ -120,6 +120,25 @@ async function register(page, national, e164, name, prefix) {
   await sleep(300);
   await shot(a, 'a-07-chat');
 
+  // Read receipts: B has the chat open, so A's messages show two (read) ticks
+  await a.locator('.stack-item.top .bubble-foot svg.read').first().waitFor({ timeout: 15000 });
+
+  // Long-press menu: B reacts with a heart and replies to A's message
+  await b.locator('.stack-item.top .bubble-text', { hasText: 'Can you read this?' }).click({ button: 'right' });
+  await b.locator('.reaction-bar').waitFor();
+  await sleep(300);
+  await shot(b, 'b-02b-menu');
+  await b.getByRole('button', { name: 'React with ❤️' }).click();
+  await a.locator('.stack-item.top .reactions', { hasText: '❤️' }).waitFor({ timeout: 15000 });
+  await b.locator('.stack-item.top .bubble-text', { hasText: 'Can you read this?' }).click({ button: 'right' });
+  await b.locator('.context-actions button', { hasText: 'Reply' }).click();
+  await b.locator('.reply-bar').waitFor();
+  await b.getByLabel('Message').fill('Yes, every word.');
+  await b.getByRole('button', { name: 'Send' }).click();
+  await a.locator('.stack-item.top .bubble', { hasText: 'Yes, every word.' }).locator('.quote').waitFor({ timeout: 15000 });
+  await sleep(500);
+  await shot(a, 'a-07b-reactions-reply');
+
   // Edge swipe from the left goes back to the chat list
   await a.mouse.move(4, 420);
   await a.mouse.down();
