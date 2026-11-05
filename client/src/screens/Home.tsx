@@ -10,10 +10,11 @@ import { NewChatSheet } from './NewChat';
 import { SettingsTab } from './Settings';
 import { describeSystem } from './system';
 import { DevicesScreen } from './Devices';
+import { TodayTab, VlogIcon } from './Today';
 
 export function Home() {
   const nav = useNav();
-  const [tab, setTab] = useState<'chats' | 'settings'>('chats');
+  const [tab, setTab] = useState<'today' | 'chats' | 'settings'>('today');
 
   // Tapping a notification opens that chat.
   useEffect(() => {
@@ -23,6 +24,10 @@ export function Home() {
       nav.push(<ChatScreen convId={convId} />);
     };
     const openScreen = (screen: string) => {
+      if (screen === 'today') {
+        setTab('today');
+        return;
+      }
       if (screen !== 'devices') return;
       setTab('settings');
       nav.push(<DevicesScreen />);
@@ -41,12 +46,21 @@ export function Home() {
     return () => navigator.serviceWorker?.removeEventListener('message', onMessage);
   }, []);
   const unread = useStore((s) => Object.values(s.convs).reduce((n, c) => n + (c.hidden ? 0 : c.unread), 0));
+  const myTurn = useStore((s) => Boolean(s.circle?.id && s.me && s.circle.picks.some((p) => p.day === s.circle!.today && p.userId === s.me!.id)));
 
   return (
     <div class="home">
+      <div class={`tab-pane${tab === 'today' ? ' active' : ''}`}><TodayTab /></div>
       <div class={`tab-pane${tab === 'chats' ? ' active' : ''}`}><ChatsTab /></div>
       <div class={`tab-pane${tab === 'settings' ? ' active' : ''}`}><SettingsTab /></div>
       <nav class="tabbar" aria-label="Main">
+        <button class={tab === 'today' ? 'active' : ''} onClick={() => setTab('today')} aria-current={tab === 'today'}>
+          <span class="tab-icon">
+            <VlogIcon size={26} />
+            {myTurn && <span class="tab-badge dot" />}
+          </span>
+          <span>Today</span>
+        </button>
         <button class={tab === 'chats' ? 'active' : ''} onClick={() => setTab('chats')} aria-current={tab === 'chats'}>
           <span class="tab-icon">
             <Chats size={26} />

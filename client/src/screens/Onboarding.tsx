@@ -9,6 +9,7 @@ import { startVerification, checkVerification, submitPin, forgetDevice, updatePr
 import { errorMessage } from '../lib/api';
 import { useStore } from '../lib/store';
 import { editAvatar } from '../ui/AvatarEditor';
+import { offerCircleSetup } from './Today';
 import { parsePhoneNumberFromString } from 'libphonenumber-js/min';
 
 export function Welcome() {
@@ -247,10 +248,10 @@ export function ProfileSetup() {
           maxLength={40}
           value={name}
           onInput={(e) => setName((e.target as HTMLInputElement).value)}
-          onKeyDown={(e) => e.key === 'Enter' && name.trim() && run(() => updateProfile({ name }))}
+          onKeyDown={(e) => e.key === 'Enter' && name.trim() && run(async () => { offerCircleSetup(); await updateProfile({ name }); })}
         />
         <div class="form-spacer" />
-        <Button onClick={() => run(() => updateProfile({ name }))} loading={busy} disabled={!name.trim()}>Continue</Button>
+        <Button onClick={() => run(async () => { offerCircleSetup(); await updateProfile({ name }); })} loading={busy} disabled={!name.trim()}>Continue</Button>
       </div>
     </div>
   );

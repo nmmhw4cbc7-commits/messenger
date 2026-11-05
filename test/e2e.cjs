@@ -72,8 +72,18 @@ async function register(page, national, e164, name, prefix) {
   if (prefix) await shot(page, `${prefix}-04-profile`);
   await page.getByLabel('Your name').fill(name);
   await page.getByRole('button', { name: 'Continue' }).click();
-  await page.getByRole('heading', { name: 'Chats', exact: true }).waitFor();
-  await sleep(400);
+  await page.locator('.sheet-layer', { hasText: 'Your friend group' }).waitFor({ timeout: 15000 });
+  if (prefix) await shot(page, `${prefix}-05-circle-offer`);
+  await page.locator('.sheet-layer').getByRole('button', { name: 'Close' }).click();
+  await sleep(500);
+  await openChats(page);
+}
+
+/** The app opens on Vlog your Day; switch to the chat list. */
+async function openChats(page) {
+  await page.locator('.tabbar').getByRole('button', { name: 'Chats' }).click();
+  await page.getByRole('heading', { name: 'Chats', exact: true }).waitFor({ timeout: 20000 });
+  await sleep(300);
 }
 
 (async () => {
@@ -202,7 +212,8 @@ async function register(page, national, e164, name, prefix) {
   await a.getByLabel('Pairing code').fill(pairCode);
   await a.getByRole('button', { name: 'Link', exact: true }).click();
   await a.locator('.alert-buttons button', { hasText: 'Link and transfer chats' }).click();
-  await ad.getByRole('heading', { name: 'Chats', exact: true }).waitFor({ timeout: 20000 });
+  await ad.locator('.tabbar').waitFor({ timeout: 20000 });
+  await openChats(ad);
   await a.locator('.stack-item.top .cell-title', { hasText: /·/ }).first().waitFor({ timeout: 15000 });
   await shot(a, 'a-07d-devices');
   // Ben writes: both of Anna's devices receive it
@@ -221,12 +232,50 @@ async function register(page, national, e164, name, prefix) {
   await shot(a, 'a-07d-devices');
   await a.getByRole('button', { name: 'Back' }).click();
   await sleep(500);
-  await a.getByRole('button', { name: 'Chats' }).click();
+  await a.locator('.tabbar').getByRole('button', { name: 'Chats' }).click();
   await a.locator('.chat-row', { hasText: 'Ben Okafor' }).click();
   await a.locator('.stack-item.top .bubble-row.out .bubble-text', { hasText: 'Sent from my laptop' }).waitFor({ timeout: 20000 });
   await sleep(500);
   await shot(ad, 'ad-02-chat');
   await shot(a, 'a-07e-own-from-laptop');
+
+  // ---- Vlog your Day: Anna creates a friend group with Ben; today's pick posts a photo, the other sees it
+  await a.getByRole('button', { name: 'Back' }).click();
+  await sleep(500);
+  await a.locator('.tabbar').getByRole('button', { name: 'Today' }).click();
+  await a.getByRole('button', { name: 'Choose friends' }).first().click();
+  await a.locator('.sheet-layer').getByRole('button', { name: 'Choose friends' }).click();
+  await a.locator('.sheet-layer .plain-row.person', { hasText: 'Ben Okafor' }).click();
+  await a.locator('.sheet-layer').getByRole('button', { name: 'Create' }).click();
+  await a.locator('.vlog-card').first().waitFor({ timeout: 15000 });
+  await b.getByRole('button', { name: 'Back' }).click();
+  await sleep(500);
+  await b.locator('.tabbar').getByRole('button', { name: 'Today' }).click();
+  await b.locator('.vlog-card').first().waitFor({ timeout: 15000 });
+  await sleep(800);
+  const annaPicked = await a.locator('.vlog-card.mine').count() > 0;
+  const [poster, viewer] = annaPicked ? [a, b] : [b, a];
+  await shot(poster, 'vlog-01-my-turn');
+  await shot(viewer, 'vlog-02-their-turn');
+  const png = await poster.evaluate(() => { const c = document.createElement('canvas'); c.width = 900; c.height = 1200; const x = c.getContext('2d'); x.fillStyle = '#ff5a1f'; x.fillRect(0, 0, 900, 1200); x.fillStyle = '#141412'; x.font = 'bold 120px sans-serif'; x.fillText('MORNING', 120, 640); return c.toDataURL('image/png').split(',')[1]; });
+  const vlogChooser = poster.waitForEvent('filechooser');
+  await poster.locator('.vlog-action', { hasText: /^Photo$/ }).click();
+  await (await vlogChooser).setFiles({ name: 'morning.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
+  await poster.getByLabel('Caption').fill('Good morning from the test');
+  await shot(poster, 'vlog-03-post-sheet');
+  await poster.getByRole('button', { name: 'Post to your vlog' }).click();
+  await poster.locator('.vlog-item-caption', { hasText: 'Good morning from the test' }).waitFor({ timeout: 20000 });
+  await viewer.locator('.vlog-item-caption', { hasText: 'Good morning from the test' }).waitFor({ timeout: 30000 });
+  await viewer.locator('.vlog-item-media img').first().waitFor({ timeout: 30000 });
+  await sleep(600);
+  await shot(poster, 'vlog-04-posted');
+  await shot(viewer, 'vlog-05-follow-along');
+  // Back to the chats both phones were in
+  await openChats(a);
+  await a.locator('.chat-row', { has: a.locator('.chat-row-title', { hasText: /^Ben Okafor$/ }) }).click();
+  await openChats(b);
+  await b.locator('.chat-row', { has: b.locator('.chat-row-title', { hasText: /^Anna Berger$/ }) }).click();
+  await sleep(600);
 
   // Edge swipe from the left goes back to the chat list
   await a.mouse.move(4, 420);
@@ -346,7 +395,7 @@ async function register(page, national, e164, name, prefix) {
   await sleep(500);
 
   // Long-press action sheet in chat (context menu)
-  await a.getByRole('button', { name: 'Chats' }).click();
+  await a.locator('.tabbar').getByRole('button', { name: 'Chats' }).click();
   await sleep(300);
 
   // ---- B moves to a new device: A must see a safety number notice, and new
@@ -358,7 +407,8 @@ async function register(page, national, e164, name, prefix) {
   await b2.getByRole('button', { name: 'Continue' }).click();
   await b2.locator('a', { hasText: 'Open Telegram' }).waitFor({ timeout: 15000 });
   await confirmInTelegram(b2, B_E164, Number(B_E164.slice(-9)));
-  await b2.getByRole('heading', { name: 'Chats', exact: true }).waitFor({ timeout: 15000 });
+  await b2.locator('.tabbar').waitFor({ timeout: 15000 });
+  await openChats(b2);
   await sleep(1500);
 
   await a.locator('.chat-row', { hasText: 'Ben Okafor' }).click();
@@ -395,7 +445,8 @@ async function register(page, national, e164, name, prefix) {
   await shot(a2, 'a2-01-pin-wrong');
   await a2.getByLabel('PIN').fill('482915');
   await a2.getByRole('button', { name: 'Continue' }).click();
-  await a2.getByRole('heading', { name: 'Chats', exact: true }).waitFor({ timeout: 10000 });
+  await a2.locator('.tabbar').waitFor({ timeout: 10000 });
+  await openChats(a2);
 
   console.log('safety number', numA.replace(/\s+/g, ' '));
   console.log(errors.length ? `ERRORS:\n${errors.join('\n')}` : 'no page errors');

@@ -85,6 +85,8 @@ export interface Conv {
   updatedAt: number;
   myRole: 'admin' | 'member';
   members: Member[];
+  /** The friend group for Vlog your Day. */
+  circle?: boolean;
   // Device-only fields
   left: boolean;
   lastReadAt: number;
@@ -125,6 +127,16 @@ export interface State {
   pushPreview: boolean;
   /** Chat history is being transferred from another device. */
   importing: 'none' | 'waiting' | 'importing';
+  /** Vlog your Day: my friend group and who vlogs on which day. */
+  circle: CircleState | null;
+}
+
+export interface CircleState {
+  id: string | null;
+  /** Today in Europe/Berlin, YYYY-MM-DD. */
+  today: string;
+  /** day -> userId, newest first */
+  picks: { day: string; userId: string }[];
 }
 
 let state: State = {
@@ -141,6 +153,7 @@ let state: State = {
   aliases: {},
   pushPreview: true,
   importing: 'none',
+  circle: null,
 };
 
 const listeners = new Set<() => void>();

@@ -1,0 +1,424 @@
+// Vlog your Day: every day one person from your friend group is picked to
+// vlog their day (3 videos, 6 minutes in total, or 6 photos). The posts are
+// end-to-end encrypted media in the group's chat, so the messenger stays the
+// place to talk about them.
+
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { getState, useStore, type Conv, type Member, type Msg } from '../lib/store';
+import {
+  addMembers, avatarUrl, createCircle, displayName, formatDuration, loadMessages, refreshCircle, sendMedia,
+  vlogPosts, vlogUsage, VLOG_LIMITS,
+} from '../lib/engine';
+import { compressVideo, MAX_FILE, preparePhoto, prepareVideo } from '../lib/media';
+import { errorMessage } from '../lib/api';
+import { Avatar, Button, Screen, Spinner, toast, useAsync } from '../ui/components';
+import { getNav, useNav } from '../ui/nav';
+import { Camera, ChevronRight, PersonAdd, Chats as ChatIcon, Close } from '../ui/icons';
+import { PeoplePicker } from './NewChat';
+import { ChatScreen } from './Chat';
+import { openViewer, pickFile, useMediaUrl } from './Attachments';
+
+export const VlogIcon = ({ size = 26 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <rect x="2.5" y="6" width="13" height="12" rx="2.5" /><path d="m15.5 10.5 5-3v9l-5-3" /><circle cx="9" cy="12" r="2.2" />
+  </svg>
+);
+
+const SETUP_FLAG = 'haven-circle-intro';
+/** Remember to offer the friend group setup right after creating a profile. */
+export const offerCircleSetup = () => { try { localStorage.setItem(SETUP_FLAG, '1'); } catch { /* private mode */ } };
+
+const dayLabel = (day: string, today: string) => {
+  if (day === today) return 'Today';
+  const d = new Date(`${day}T12:00:00`);
+  const y = new Date(`${today}T12:00:00`);
+  y.setDate(y.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+};
+const timeOf = (t: number) => new Date(t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+const firstName = (p: Member | undefined) => displayName(p).split(' ')[0];
+
+export function TodayTab() {
+  const nav = useNav();
+  const circle = useStore((s) => s.circle);
+  const me = useStore((s) => s.me);
+  const conv = useStore((s) => (s.circle?.id ? s.convs[s.circle.id] : undefined));
+  const messages = useStore((s) => (s.circle?.id ? s.messages[s.circle.id] : undefined));
+  useStore((s) => s.aliases);
+
+  useEffect(() => { refreshCircle().catch(() => {}); }, []);
+  useEffect(() => { if (circle?.id) loadMessages(circle.id); }, [circle?.id]);
+
+  // Right after sign-up: offer to set up the friend group once.
+  useEffect(() => {
+    if (!circle || circle.id) return;
+    let flagged = false;
+    try { flagged = localStorage.getItem(SETUP_FLAG) === '1'; localStorage.removeItem(SETUP_FLAG); } catch { /* ignore */ }
+    if (flagged) openCircleSetup();
+  }, [circle?.id, circle === null]);
+
+  if (!circle) {
+    return <Screen title="Vlog your Day" large><div class="center pad"><Spinner /></div></Screen>;
+  }
+  if (!circle.id || !conv) {
+    return (
+      <Screen title="Vlog your Day" large>
+        <div class="vlog-intro">
+          <span class="vlog-intro-icon"><VlogIcon size={34} /></span>
+          <h2>Your friends’ day, every day</h2>
+          <p>Pick the friends in your group. Every day one of you is chosen at random to vlog their day: <strong>3 videos (6 minutes)</strong> or <strong>6 photos</strong>. Everyone else follows along.</p>
+          <ol class="vlog-steps">
+            <li><span>01</span>Choose your friend group</li>
+            <li><span>02</span>Get a push when it’s your turn</li>
+            <li><span>03</span>Share your day, end-to-end encrypted</li>
+          </ol>
+          <Button onClick={openCircleSetup}>Choose friends</Button>
+        </div>
+      </Screen>
+    );
+  }
+
+  const today = circle.today;
+  const pick = circle.picks.find((p) => p.day === today);
+  const picked = pick ? conv.members.find((m) => m.id === pick.userId) : undefined;
+  const mine = pick?.userId === me?.id;
+  const posts = vlogPosts(messages, today, pick?.userId);
+  const earlier = circle.picks.filter((p) => p.day !== today);
+
+  return (
+    <Screen title="Vlog your Day" large>
+      <p class="vlog-date">{new Date(`${today}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+
+      {!pick ? (
+        <div class="vlog-card">
+          <p class="vlog-card-label">Waiting for friends</p>
+          <h2 class="vlog-card-title">Invite at least one friend</h2>
+          <p class="vlog-card-text">As soon as your group has two people, someone gets picked every day.</p>
+          <Button onClick={() => inviteToCircle(conv)}><PersonAdd size={20} /> Invite friends</Button>
+        </div>
+      ) : mine ? (
+        <MyTurn conv={conv} today={today} posts={posts} />
+      ) : (
+        <div class="vlog-card">
+          <div class="vlog-card-person">
+            <Avatar id={picked?.id ?? pick.userId} name={displayName(picked)} src={picked ? avatarUrl(picked) : null} size={56} />
+            <div>
+              <p class="vlog-card-label"><span class="live-dot" />Today’s vlogger</p>
+              <h2 class="vlog-card-title">{displayName(picked) || 'A friend'}</h2>
+            </div>
+          </div>
+          <p class="vlog-card-text">{posts.length ? `${posts.length} ${posts.length === 1 ? 'post' : 'posts'} so far. Follow their day below.` : `${firstName(picked) || 'They'} hasn’t posted yet. You’ll see it here as soon as they do.`}</p>
+        </div>
+      )}
+
+      {posts.length > 0 && <Timeline posts={posts} />}
+
+      <div class="vlog-section-head">
+        <h3>Friend group</h3>
+        <button class="link-button" onClick={() => inviteToCircle(conv)}>Invite</button>
+      </div>
+      <div class="vlog-friends">
+        {conv.members.map((m) => (
+          <div key={m.id} class="vlog-friend">
+            <Avatar id={m.id} name={displayName(m)} src={avatarUrl(m)} size={48} />
+            <span>{m.id === me?.id ? 'You' : firstName(m)}</span>
+          </div>
+        ))}
+        <button class="vlog-friend add" onClick={() => inviteToCircle(conv)} aria-label="Invite friends">
+          <span class="vlog-friend-add"><PersonAdd size={20} /></span>
+          <span>Invite</span>
+        </button>
+      </div>
+      <div class="pad-x">
+        <Button variant="secondary" onClick={() => nav.push(<ChatScreen convId={conv.id} />)}><ChatIcon size={20} /> Group chat</Button>
+      </div>
+
+      {earlier.length > 0 && (
+        <>
+          <div class="vlog-section-head"><h3>Earlier</h3></div>
+          <ul class="vlog-days">
+            {earlier.map((p) => {
+              const who = conv.members.find((m) => m.id === p.userId);
+              const n = vlogPosts(messages, p.day, p.userId).length;
+              return (
+                <li key={p.day}>
+                  <button class="vlog-day-row" onClick={() => nav.push(<DayScreen convId={conv.id} day={p.day} userId={p.userId} />)}>
+                    <Avatar id={p.userId} name={displayName(who)} src={who ? avatarUrl(who) : null} size={40} />
+                    <span class="vlog-day-text">
+                      <strong>{dayLabel(p.day, today)}</strong>
+                      <span>{p.userId === me?.id ? 'You' : displayName(who) || 'Former member'} · {n ? `${n} ${n === 1 ? 'post' : 'posts'}` : 'no posts'}</span>
+                    </span>
+                    <ChevronRight size={18} />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
+      <p class="fine-print vlog-fine">Vlogs are end-to-end encrypted. The server deletes them after a week; your devices keep them.</p>
+    </Screen>
+  );
+}
+
+// ------------------------------------------------------------------ my turn
+
+function MyTurn({ conv, today, posts }: { conv: Conv; today: string; posts: Msg[] }) {
+  const usage = vlogUsage(posts);
+  const pending = posts.some((p) => p.status === 'pending');
+  const leftSeconds = VLOG_LIMITS.seconds - usage.seconds;
+  const canVideo = usage.photos === 0 && usage.videos < VLOG_LIMITS.videos && leftSeconds > 0;
+  const canPhoto = usage.videos === 0 && usage.photos < VLOG_LIMITS.photos;
+  const done = !canVideo && !canPhoto;
+
+  const addVideo = async (capture: boolean) => {
+    const file = await pickFile('video/*', capture);
+    if (!file) return;
+    try {
+      if (!file.type.startsWith('video/')) throw new Error('Please choose a video.');
+      const v = await prepareVideo(file, Infinity);
+      if (!v.duration) throw new Error('The length of this video could not be read.');
+      if (v.duration > leftSeconds + 1) throw new Error(`This video is ${formatDuration(v.duration)} long. You have ${formatDuration(leftSeconds)} left today.`);
+      openPostSheet({ conv, today, kind: 'video', file, ...v });
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  };
+  const addPhoto = async (capture: boolean) => {
+    const file = await pickFile('image/*', capture);
+    if (!file) return;
+    try {
+      if (!file.type.startsWith('image/')) throw new Error('Please choose a photo.');
+      const p = await preparePhoto(file);
+      openPostSheet({ conv, today, kind: 'image', file: p.blob, blob: p.blob, w: p.w, h: p.h, duration: 0, thumb: p.thumb });
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  };
+
+  return (
+    <div class="vlog-card mine">
+      <p class="vlog-card-label"><span class="live-dot" />It’s your turn</p>
+      <h2 class="vlog-card-title">{done ? 'Your day is vlogged' : 'Vlog your day'}</h2>
+      <p class="vlog-card-text">
+        {done ? 'Thanks for sharing. Your friends can follow your day now.'
+          : usage.videos ? `${usage.videos} of ${VLOG_LIMITS.videos} videos · ${formatDuration(usage.seconds)} of 6:00 used`
+          : usage.photos ? `${usage.photos} of ${VLOG_LIMITS.photos} photos`
+          : 'Share 3 videos (6 minutes in total) or 6 photos.'}
+      </p>
+      {(usage.videos > 0 || usage.photos > 0) && (
+        <div class="vlog-meter" aria-hidden="true">
+          {Array.from({ length: usage.videos ? VLOG_LIMITS.videos : VLOG_LIMITS.photos }, (_, i) => (
+            <span key={i} class={i < (usage.videos || usage.photos) ? 'on' : ''} />
+          ))}
+        </div>
+      )}
+      {!done && (
+        <div class="vlog-actions">
+          {canVideo && <button class="vlog-action" disabled={pending} onClick={() => addVideo(true)}><VlogIcon size={22} />Record</button>}
+          {canVideo && <button class="vlog-action" disabled={pending} onClick={() => addVideo(false)}><VlogIcon size={22} />Video</button>}
+          {canPhoto && <button class="vlog-action" disabled={pending} onClick={() => addPhoto(true)}><Camera size={22} />Take photo</button>}
+          {canPhoto && <button class="vlog-action" disabled={pending} onClick={() => addPhoto(false)}><Camera size={22} />Photo</button>}
+        </div>
+      )}
+      {!done && usage.videos === 0 && usage.photos === 0 && <p class="vlog-card-hint">Your first post decides: videos or photos.</p>}
+    </div>
+  );
+}
+
+type Picked = { conv: Conv; today: string; kind: 'video' | 'image'; file: Blob; blob: Blob; w: number; h: number; duration: number; thumb?: string };
+
+function openPostSheet(p: Picked) {
+  getNav().present((close) => <PostSheet p={p} close={close} />, { variant: 'card' });
+}
+
+function PostSheet({ p, close }: { p: Picked; close: () => Promise<void> }) {
+  const [caption, setCaption] = useState('');
+  const [progress, setProgress] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const abort = useRef<AbortController | null>(null);
+  const preview = useMemo(() => URL.createObjectURL(p.file), [p.file]);
+  useEffect(() => () => { URL.revokeObjectURL(preview); abort.current?.abort(); }, []);
+
+  const post = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      let blob = p.blob;
+      if (p.kind === 'video' && blob.size > MAX_FILE) {
+        abort.current = new AbortController();
+        setProgress(0);
+        blob = await compressVideo(blob, p.duration, setProgress, abort.current.signal);
+        if (blob.size > MAX_FILE) throw new Error('This video is still too large. Please choose a shorter one.');
+      }
+      // Still the picked one today? (The day may have changed while the sheet was open.)
+      const c = getState().circle;
+      if (c?.today !== p.today) throw new Error('A new day has started. Check who vlogs today.');
+      await sendMedia(p.conv.id, blob, {
+        kind: p.kind, w: p.w, h: p.h, thumb: p.thumb, vlog: p.today,
+        ...(p.kind === 'video' ? { duration: p.duration } : {}),
+        ...(caption.trim() ? { caption: caption.trim().slice(0, 300) } : {}),
+      });
+      await close();
+    } catch (err) {
+      if ((err as Error).name !== 'AbortError') toast(errorMessage(err), 'error');
+      setBusy(false);
+      setProgress(null);
+    }
+  };
+
+  return (
+    <div class="sheet-page">
+      <div class="sheet-header sheet-drag">
+        <button class="nav-button" onClick={() => close()}>Cancel</button>
+        <strong>{p.kind === 'video' ? 'New video' : 'New photo'}</strong>
+        <button class="nav-button bold" onClick={post} disabled={busy}>Post</button>
+      </div>
+      <div class="sheet-scroll">
+        <div class="vlog-preview">
+          {p.kind === 'video' ? <video src={preview} controls playsInline /> : <img src={preview} alt="" />}
+        </div>
+        <div class="sheet-content">
+          <input class="field" type="text" placeholder="Add a caption" maxLength={300} value={caption} aria-label="Caption"
+            onInput={(e) => setCaption((e.target as HTMLInputElement).value)} disabled={busy} />
+          {progress !== null && (
+            <div class="vlog-progress" role="status">
+              <div class="vlog-progress-bar"><span style={{ width: `${Math.round(progress * 100)}%` }} /></div>
+              <p>Making the video smaller… {Math.round(progress * 100)}%. Keep Haven open.</p>
+            </div>
+          )}
+          <Button onClick={post} loading={busy}>Post to your vlog</Button>
+          <p class="fine-print">Only your friend group can see it.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ timeline
+
+function Timeline({ posts }: { posts: Msg[] }) {
+  const sorted = [...posts].sort((a, b) => a.createdAt - b.createdAt);
+  return (
+    <ol class="vlog-timeline">
+      {sorted.map((m) => <TimelineItem key={m.id} msg={m} />)}
+    </ol>
+  );
+}
+
+function TimelineItem({ msg }: { msg: Msg }) {
+  const media = msg.media!;
+  const { url, error } = useMediaUrl(msg);
+  const ratio = media.w && media.h ? Math.min(Math.max(media.h / media.w, 0.56), 1.25) : 1;
+  return (
+    <li class="vlog-item">
+      <span class="vlog-item-time">{timeOf(msg.createdAt)}{msg.status === 'pending' ? ' · posting…' : msg.status === 'failed' ? ' · not sent' : ''}</span>
+      <button
+        class="vlog-item-media"
+        style={{ aspectRatio: `${1 / ratio}`, ...(media.thumb ? { backgroundImage: `url(${media.thumb})` } : {}) }}
+        onClick={() => url && openViewer(msg, url)}
+        aria-label={media.kind === 'video' ? 'Play video' : 'Open photo'}
+      >
+        {url && media.kind === 'image' && <img src={url} alt="" draggable={false} />}
+        {url && media.kind === 'video' && <video src={url} muted playsInline preload="metadata" />}
+        {media.kind === 'video' && <span class="vlog-play">▶{media.duration ? <em>{formatDuration(media.duration)}</em> : null}</span>}
+        {!url && !error && <span class="visual-loading"><Spinner /></span>}
+        {error && <span class="visual-error">{error}</span>}
+      </button>
+      {media.caption && <p class="vlog-item-caption">{media.caption}</p>}
+    </li>
+  );
+}
+
+function DayScreen({ convId, day, userId }: { convId: string; day: string; userId: string }) {
+  const conv = useStore((s) => s.convs[convId]);
+  const messages = useStore((s) => s.messages[convId]);
+  const today = useStore((s) => s.circle?.today ?? day);
+  const who = conv?.members.find((m) => m.id === userId);
+  const posts = vlogPosts(messages, day, userId);
+  return (
+    <Screen back title={dayLabel(day, today)}>
+      <div class="vlog-card">
+        <div class="vlog-card-person">
+          <Avatar id={userId} name={displayName(who)} src={who ? avatarUrl(who) : null} size={56} />
+          <div>
+            <p class="vlog-card-label">{dayLabel(day, today)}</p>
+            <h2 class="vlog-card-title">{displayName(who) || 'Former member'}</h2>
+          </div>
+        </div>
+      </div>
+      {posts.length ? <Timeline posts={posts} /> : <p class="muted center pad">No posts on this day.</p>}
+    </Screen>
+  );
+}
+
+// ------------------------------------------------------------------ friend group setup and invites
+
+export function openCircleSetup() {
+  getNav().present((close) => <CircleSetup close={close} />, { variant: 'full' });
+}
+
+function CircleSetup({ close }: { close: () => Promise<void> }) {
+  const [step, setStep] = useState<'intro' | 'pick'>('intro');
+  const [name, setName] = useState('Friends');
+  const [busy, run] = useAsync();
+  if (step === 'pick') {
+    return (
+      <PeoplePicker
+        title="Friend group"
+        confirmLabel={busy ? 'Creating…' : 'Create'}
+        cancelLabel="Back"
+        backArrow
+        onCancel={() => setStep('intro')}
+        onConfirm={(people) => run(async () => {
+          const skipped = await createCircle(name.trim() || 'Friends', people.map((p) => p.id));
+          await close();
+          if (skipped.length) toast(`${skipped.length === 1 ? '1 person is' : `${skipped.length} people are`} already in another friend group.`);
+          else toast('Friend group created');
+        }, (err) => toast(errorMessage(err), 'error'))}
+      />
+    );
+  }
+  return (
+    <div class="sheet-page">
+      <div class="sheet-header sheet-drag">
+        <button class="nav-button" onClick={() => close()} aria-label="Close"><Close size={22} /></button>
+        <strong>Vlog your Day</strong>
+        <span />
+      </div>
+      <div class="sheet-scroll">
+        <div class="vlog-intro in-sheet">
+          <span class="vlog-intro-icon"><VlogIcon size={34} /></span>
+          <h2>Your friend group</h2>
+          <p>Every day one person from this group is picked at random and vlogs their day for the others: 3 videos (6 minutes) or 6 photos.</p>
+        </div>
+        <div class="sheet-content">
+          <input class="field" type="text" maxLength={60} value={name} aria-label="Group name" placeholder="Group name" onInput={(e) => setName((e.target as HTMLInputElement).value)} />
+          <Button onClick={() => setStep('pick')} disabled={!name.trim()}>Choose friends</Button>
+          <p class="fine-print">Friends who aren’t on Haven yet can be invited by their number. You can add more people any time.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function inviteToCircle(conv: Conv) {
+  getNav().present((close) => (
+    <PeoplePicker
+      title="Invite friends"
+      confirmLabel="Add"
+      exclude={new Set(conv.members.map((m) => m.id))}
+      onCancel={() => close()}
+      onConfirm={async (people) => {
+        try {
+          await addMembers(conv.id, people.map((p) => p.id));
+          await close();
+          toast(people.length === 1 ? `${displayName(people[0])} joined your friend group` : 'Friends added');
+        } catch (err) {
+          toast(errorMessage(err), 'error');
+        }
+      }}
+    />
+  ), { variant: 'full' });
+}

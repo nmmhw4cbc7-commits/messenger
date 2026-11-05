@@ -2337,3 +2337,70 @@ button.plain-row:active { background: var(--press); transition: none; }
 }
 .avatar-editor-btn.primary { background: var(--accent); color: #141412; font-weight: 600; }
 .avatar-editor-btn:disabled { opacity: 0.6; }
+
+/* ------------------------------------------------------------------ Vlog your Day */
+.tab-badge.dot { min-width: 9px; width: 9px; height: 9px; padding: 0; top: -1px; right: -3px; box-shadow: 0 0 0 2px var(--bg); }
+.vlog-date { margin: -4px 20px 14px; font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); }
+.vlog-intro { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 8px 20px 28px; }
+.vlog-intro.in-sheet { padding-top: 24px; }
+.vlog-intro-icon { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 18px; background: var(--ink); color: var(--signal); }
+.vlog-intro h2 { margin: 6px 0 0; font-size: 26px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
+.vlog-intro p { margin: 0; font-size: 15.5px; line-height: 1.5; color: var(--text-2); }
+.vlog-intro p strong { color: var(--text); font-weight: 600; }
+.vlog-intro .btn { margin-top: 8px; }
+.vlog-steps { list-style: none; margin: 4px 0 6px; padding: 0; width: 100%; border-top: 1px solid var(--line); }
+.vlog-steps li { display: flex; gap: 14px; align-items: baseline; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 15.5px; }
+.vlog-steps li span { font-family: var(--mono); font-size: 12px; color: var(--signal); }
+
+.vlog-card { margin: 0 16px 18px; padding: 18px; border-radius: 18px; background: var(--bg-elevated); box-shadow: 0 0 0 0.5px var(--sep); display: flex; flex-direction: column; gap: 10px; }
+.vlog-card.mine { background: var(--ink); color: var(--on-ink); box-shadow: none; }
+.vlog-card.mine .vlog-card-text, .vlog-card.mine .vlog-card-hint { color: rgba(248, 247, 243, 0.68); }
+.vlog-card-person { display: flex; align-items: center; gap: 14px; }
+.vlog-card-label { margin: 0; display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--signal); }
+.vlog-card-title { margin: 2px 0 0; font-size: 24px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
+.vlog-card-text { margin: 0; font-size: 15px; line-height: 1.45; color: var(--text-2); }
+.vlog-card-hint { margin: 2px 0 0; font-size: 13px; color: var(--text-3); }
+.live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--signal); box-shadow: 0 0 0 3px rgba(255, 90, 31, 0.2); animation: live-pulse 1.8s ease-in-out infinite; }
+@keyframes live-pulse { 50% { box-shadow: 0 0 0 6px rgba(255, 90, 31, 0); } }
+.vlog-meter { display: flex; gap: 5px; }
+.vlog-meter span { flex: 1; height: 4px; border-radius: 2px; background: rgba(248, 247, 243, 0.18); }
+.vlog-meter span.on { background: var(--signal); }
+.vlog-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
+.vlog-action { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; height: 78px; border: 0; border-radius: 14px; background: rgba(248, 247, 243, 0.08); color: var(--on-ink); font: inherit; font-size: 14px; font-weight: 600; }
+.vlog-action:first-child { background: var(--signal); color: #141412; }
+.vlog-action:active { transform: scale(0.97); }
+.vlog-action:disabled { opacity: 0.5; }
+
+.vlog-timeline { list-style: none; margin: 0 16px 8px; padding: 0 0 0 18px; border-left: 1.5px solid var(--sep); display: flex; flex-direction: column; gap: 22px; }
+.vlog-item { position: relative; display: flex; flex-direction: column; gap: 8px; }
+.vlog-item::before { content: ''; position: absolute; left: -24.5px; top: 4px; width: 9px; height: 9px; border-radius: 50%; background: var(--signal); box-shadow: 0 0 0 3px var(--bg); }
+.vlog-item-time { font-family: var(--mono); font-size: 12px; letter-spacing: 0.04em; color: var(--text-2); }
+.vlog-item-media { position: relative; width: 100%; max-height: 56vh; border: 0; padding: 0; border-radius: 16px; overflow: hidden; background: #1c1c1a center / cover no-repeat; }
+.vlog-item-media img, .vlog-item-media video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.vlog-play { position: absolute; left: 12px; bottom: 12px; display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 20px; background: rgba(20, 20, 18, 0.62); color: #fff; font-size: 13px; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+.vlog-play em { font-style: normal; font-family: var(--mono); font-size: 12px; }
+.vlog-item-caption { margin: 0; font-size: 15px; line-height: 1.4; }
+
+.vlog-section-head { display: flex; align-items: baseline; justify-content: space-between; margin: 22px 20px 10px; }
+.vlog-section-head h3 { margin: 0; font-family: var(--mono); font-size: 12px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); }
+.vlog-friends { display: flex; gap: 14px; overflow-x: auto; padding: 0 20px 16px; scrollbar-width: none; }
+.vlog-friends::-webkit-scrollbar { display: none; }
+.vlog-friend { flex: none; display: flex; flex-direction: column; align-items: center; gap: 6px; width: 56px; font-size: 12px; color: var(--text-2); border: 0; padding: 0; background: none; font-family: inherit; }
+.vlog-friend span:last-child { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vlog-friend-add { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%; border: 1.5px dashed var(--text-3); color: var(--text-2); }
+.vlog-days { list-style: none; margin: 0 16px; padding: 0; border-radius: 14px; overflow: hidden; background: var(--bg-elevated); box-shadow: 0 0 0 0.5px var(--sep); }
+.vlog-days li + li { border-top: 0.5px solid var(--sep); }
+.vlog-day-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 14px; border: 0; background: none; color: var(--text); font: inherit; text-align: left; }
+.vlog-day-row:active { background: var(--accent-soft); }
+.vlog-day-row > svg { color: var(--text-3); }
+.vlog-day-text { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.vlog-day-text strong { font-size: 16px; font-weight: 600; }
+.vlog-day-text span { font-size: 13.5px; color: var(--text-2); }
+.vlog-fine { margin: 20px 20px 28px; }
+
+.vlog-preview { margin: 4px 16px 12px; border-radius: 16px; overflow: hidden; background: #000; display: flex; justify-content: center; }
+.vlog-preview img, .vlog-preview video { display: block; max-width: 100%; max-height: 46vh; }
+.vlog-progress { display: flex; flex-direction: column; gap: 8px; }
+.vlog-progress p { margin: 0; font-size: 13.5px; color: var(--text-2); }
+.vlog-progress-bar { height: 6px; border-radius: 3px; background: var(--accent-soft); overflow: hidden; }
+.vlog-progress-bar span { display: block; height: 100%; background: var(--signal); transition: width 0.3s linear; }

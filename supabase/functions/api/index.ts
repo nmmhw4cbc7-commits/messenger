@@ -10,7 +10,7 @@
 import postgres from 'npm:postgres@3.4.5';
 import { parsePhoneNumberWithError } from 'npm:libphonenumber-js@1.11.20/max';
 import webpush from 'npm:web-push@3.6.7';
-import { scrypt as scryptCb, timingSafeEqual, randomBytes, createHash } from 'node:crypto';
+import { scrypt as scryptCb, timingSafeEqual, randomBytes, randomInt, createHash } from 'node:crypto';
 import { Buffer } from 'node:buffer';
 
 const sql = postgres(Deno.env.get('SUPABASE_DB_URL')!, { prepare: false, max: 4, idle_timeout: 20 });
@@ -28,7 +28,8 @@ const COOKIE = '__Host-haven';
 const MAX_BODY = 100 * 1024;
 const MAX_AVATAR = 300 * 1024;
 const DEFAULT_REGION = 'DE';
-const MAX_ATTACHMENT = 25 * 1024 * 1024;
+const MAX_ATTACHMENT = 50 * 1024 * 1024;
+const VLOG_RETENTION_DAYS = 7;
 
 const now = () => Date.now();
 const randomId = () => randomBytes(16).toString('base64url');
@@ -351,6 +352,18 @@ async function sendPendingAnnouncement() {
   if (typeof a.title !== 'string' || typeof a.body !== 'string') return;
   const payload = JSON.stringify({ t: 'announce', title: a.title.slice(0, 80), body: a.body.slice(0, 200), open: typeof a.open === 'string' ? a.open.slice(0, 40) : undefined });
   const subs = await sql`select endpoint, p256dh, auth from haven.push_subscriptions`;
+  await pushTo(subs, payload);
+}
+
+/** A visible notification with a fixed text (no message content) for these users' devices. */
+async function notifyUsers(userIds: string[], title: string, body: string, open?: string) {
+  if (!userIds.length) return;
+  const subs = await sql`select endpoint, p256dh, auth from haven.push_subscriptions where user_id = any(${userIds})`;
+  await pushTo(subs, JSON.stringify({ t: 'announce', title, body, open }));
+}
+
+async function pushTo(subs: Row[], payload: string) {
+  if (!subs.length) return;
   const keys = await vapidKeys();
   const origin = (await allowedOrigins())[0] || 'https://haven.app';
   webpush.setVapidDetails(`mailto:push@${new URL(origin).hostname}`, keys.publicKey, keys.privateKey);
@@ -360,7 +373,70 @@ async function sendPendingAnnouncement() {
         if (err.statusCode === 404 || err.statusCode === 410) await sql`delete from haven.push_subscriptions where endpoint = ${s.endpoint}`;
         return false;
       })));
-  console.log(`announcement sent to ${results.filter(Boolean).length}/${subs.length} devices`);
+  console.log(`notification sent to ${results.filter(Boolean).length}/${subs.length} devices`);
+}
+
+// ------------------------------------------------------------------ Vlog your Day: friend groups ("circles")
+//
+// A circle is a group chat flagged as such. Every day (Europe/Berlin) one
+// member is picked to vlog their day. The vlog itself is end-to-end encrypted
+// media in the group; the server only knows who is picked on which day.
+
+async function berlinNow(): Promise<{ day: string; hour: number }> {
+  const [r] = await sql`select to_char((now() at time zone 'Europe/Berlin')::date, 'YYYY-MM-DD') as day,
+                               extract(hour from now() at time zone 'Europe/Berlin')::int as hour`;
+  return { day: r.day, hour: Number(r.hour) };
+}
+
+async function circleOf(userId: string): Promise<string | null> {
+  const [c] = await sql`select c.id from haven.conversations c join haven.members m on m.conversation_id = c.id
+                        where c.circle and m.user_id = ${userId} order by c.created_at limit 1`;
+  return c?.id ?? null;
+}
+
+/** Today's pick: random among the members who have waited longest since their last turn. */
+async function ensurePick(convId: string, day: string): Promise<string | null> {
+  const [existing] = await sql`select user_id from haven.circle_days where conversation_id = ${convId} and day = ${day}`;
+  if (existing) return existing.user_id;
+  const members = await sql`select m.user_id, max(d.day) as last from haven.members m
+                            join haven.users u on u.id = m.user_id and u.name <> ''
+                            left join haven.circle_days d on d.conversation_id = m.conversation_id and d.user_id = m.user_id
+                            where m.conversation_id = ${convId} group by m.user_id`;
+  if (members.length < 2) return null;
+  const sorted = members
+    .map((m) => ({ id: m.user_id as string, last: m.last ? new Date(m.last).getTime() : 0, r: Math.random() }))
+    .sort((a, b) => a.last - b.last || a.r - b.r);
+  const pool = sorted.slice(0, Math.ceil(sorted.length / 2));
+  const pick = pool[randomInt(pool.length)].id;
+  await sql`insert into haven.circle_days (conversation_id, day, user_id, created_at) values (${convId}, ${day}, ${pick}, ${now()})
+            on conflict do nothing`;
+  const [row] = await sql`select user_id from haven.circle_days where conversation_id = ${convId} and day = ${day}`;
+  return row?.user_id ?? null;
+}
+
+/** Tell the circle who vlogs today (once per day, during the day). */
+async function announcePick(convId: string, day: string, hour: number) {
+  if (hour < 8 || hour >= 22) return;
+  const [row] = await sql`update haven.circle_days set notified = true
+                          where conversation_id = ${convId} and day = ${day} and not notified returning user_id`;
+  if (!row) return;
+  const [picked] = await sql`select name from haven.users where id = ${row.user_id}`;
+  const others = (await memberIds(convId)).filter((id) => id !== row.user_id);
+  await notifyUsers([row.user_id], 'It’s your turn today! 🎬', 'Vlog your day for your friends: 3 videos (6 min) or 6 photos.', 'today');
+  await notifyUsers(others, `${picked?.name || 'A friend'} vlogs today`, 'Follow their day in Vlog your Day.', 'today');
+  await broadcast([row.user_id, ...others], 'conversations');
+}
+
+async function circleTick() {
+  const { day, hour } = await berlinNow();
+  const circles = await sql`select id from haven.conversations where circle`;
+  for (const c of circles) {
+    try {
+      if (await ensurePick(c.id, day)) await announcePick(c.id, day, hour);
+    } catch (err) {
+      console.error('circle tick', String(err));
+    }
+  }
 }
 
 // ------------------------------------------------------------------ Telegram verification
@@ -551,6 +627,7 @@ async function serializeConversations(convs: Row[], userId: string) {
       createdAt: Number(c.created_at),
       updatedAt: Number(c.updated_at),
       myRole: list.find((m) => m.id === userId)?.role ?? 'member',
+      circle: Boolean(c.circle),
       // Read positions are only shared by people who keep read receipts on.
       members: list.map((m) => ({ ...publicProfile(m, devices.get(m.id) ?? []), role: m.role, lastReadAt: m.read_receipts ? Number(m.last_read_at) : 0 })),
     };
@@ -629,6 +706,10 @@ async function cleanup() {
   await sql`delete from haven.messages m where not exists (select 1 from haven.message_recipients r where r.seq = m.seq)`;
   const old = await sql`select name from storage.objects where bucket_id = 'attachments' and created_at < now() - make_interval(days => ${RETENTION_DAYS}) limit 200`;
   if (old.length) await storageCall('DELETE', '/object/attachments', { prefixes: old.map((o) => o.name) }).catch(() => {});
+  // Vlogs are kept on the server for a week; devices keep their decrypted copies.
+  const vlogs = await sql`select o.name from storage.objects o join haven.conversations c on c.id = split_part(o.name, '/', 1) and c.circle
+                          where o.bucket_id = 'attachments' and o.created_at < now() - make_interval(days => ${VLOG_RETENTION_DAYS}) limit 200`;
+  if (vlogs.length) await storageCall('DELETE', '/object/attachments', { prefixes: vlogs.map((o) => o.name) }).catch(() => {});
 }
 
 // ------------------------------------------------------------------ routing
@@ -1072,12 +1153,16 @@ route('POST', '/conversations/:id/members', async ({ req, reply, params, body })
   const conv = await membershipOrThrow(params.id, user.id);
   const b = shape<{ userIds: string[] }>(body, { userIds: [idList(1, MAX_GROUP), true] });
   if (conv.kind !== 'group') throw new HttpError(400, 'not_group');
-  if (conv.my_role !== 'admin') throw new HttpError(403, 'forbidden', 'Only admins can add people.');
+  if (conv.my_role !== 'admin' && !conv.circle) throw new HttpError(403, 'forbidden', 'Only admins can add people.');
   const current = new Set(await memberIds(conv.id));
   const toAdd: string[] = [];
   for (const id of b.userIds) {
-    if (!current.has(id) && (await namedUserExists(id)) && !(await hasBlocked(id, user.id))) toAdd.push(id);
+    if (!current.has(id) && (await namedUserExists(id)) && !(await hasBlocked(id, user.id))) {
+      if (conv.circle && (await circleOf(id))) continue; // one friend group per person
+      toAdd.push(id);
+    }
   }
+  if (conv.circle && !toAdd.length) throw new HttpError(400, 'in_other_circle', 'They are already in another friend group.');
   if (current.size + toAdd.length > MAX_GROUP) throw new HttpError(400, 'group_full', `Groups can have up to ${MAX_GROUP} members.`);
   if (toAdd.length) {
     const everyone = [...current, ...toAdd];
@@ -1136,6 +1221,46 @@ route('DELETE', '/conversations/:id/members/:userId', async ({ req, reply, param
   await broadcast(before, 'conversations');
   await notifyMessages(before.filter((id) => id !== user.id));
   return ok;
+});
+
+// ---- Vlog your Day
+
+route('GET', '/circle', async ({ req, reply }) => {
+  const user = await currentUser(req, reply);
+  const { day, hour } = await berlinNow();
+  const convId = await circleOf(user.id);
+  if (!convId) return { circle: null, today: day, picks: [] };
+  if (await ensurePick(convId, day)) await announcePick(convId, day, hour);
+  const picks = await sql`select to_char(day, 'YYYY-MM-DD') as day, user_id from haven.circle_days
+                          where conversation_id = ${convId} order by day desc limit 30`;
+  return { circle: convId, today: day, picks: picks.map((p) => ({ day: p.day, userId: p.user_id })) };
+});
+
+route('POST', '/circle', async ({ req, reply, body }) => {
+  const user = await currentUser(req, reply);
+  const b = shape<{ title: string; memberIds: string[] }>(body, { title: [str(1, 200), true], memberIds: [idList(1, MAX_GROUP - 1), true] });
+  await enforce(`group:${user.id}`, 20, HOUR);
+  if (await circleOf(user.id)) throw new HttpError(409, 'already_in_circle', 'You are already in a friend group.');
+  const title = cleanLine(b.title, 60) || 'Friends';
+  const memberList: string[] = [];
+  const skipped: string[] = [];
+  for (const id of b.memberIds) {
+    if (id === user.id || !(await namedUserExists(id)) || (await hasBlocked(id, user.id))) continue;
+    if (await circleOf(id)) skipped.push(id);
+    else memberList.push(id);
+  }
+  if (!memberList.length) throw new HttpError(400, 'no_members', skipped.length ? 'These people are already in another friend group.' : 'Add at least one person.');
+  const id = randomId();
+  const t = now();
+  await sql.begin(async (tx) => {
+    await tx`insert into haven.conversations (id, kind, title, created_by, created_at, updated_at, circle) values (${id}, 'group', ${title}, ${user.id}, ${t}, ${t}, true)`;
+    await tx`insert into haven.members (conversation_id, user_id, role, joined_at) values (${id}, ${user.id}, 'admin', ${t})`;
+    for (const uid of memberList) await tx`insert into haven.members (conversation_id, user_id, role, joined_at) values (${id}, ${uid}, 'member', ${t})`;
+    await systemEvent(tx, id, { type: 'group_created', actorId: user.id, title, names: await namesOf(tx, [user.id]) }, memberList);
+  });
+  await broadcast(memberList, 'conversations');
+  await notifyMessages(memberList);
+  return { conversation: await oneConversation(id, user.id), skipped };
 });
 
 // ---- messages
@@ -1327,6 +1452,10 @@ Deno.serve(async (req) => {
   try {
     if (path === '/announce' && req.method === 'POST') {
       await sendPendingAnnouncement();
+      return new Response(null, { status: 204 });
+    }
+    if (path === '/circle/tick' && req.method === 'POST') {
+      await circleTick();
       return new Response(null, { status: 204 });
     }
     if (path === '/telegram/webhook' && req.method === 'POST') return await telegramWebhook(req);

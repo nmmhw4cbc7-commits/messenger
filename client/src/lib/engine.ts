@@ -47,6 +47,7 @@ export async function boot() {
   }
   startRealtime();
   refreshConversations().then(sync).catch(() => {});
+  refreshCircle().catch(() => {});
 }
 
 sessionEvents.addEventListener('expired', () => {
@@ -271,6 +272,7 @@ interface ServerConv {
   updatedAt: number;
   myRole: 'admin' | 'member';
   members: Member[];
+  circle?: boolean;
 }
 
 function mergeConv(server: ServerConv, local?: Conv): Conv {
@@ -972,7 +974,10 @@ function connect() {
     if (msg.event !== 'broadcast') return;
     const kind = msg.payload?.event;
     if (kind === 'sync') sync();
-    else if (kind === 'conversations' || kind === 'read') refreshConversations().catch(() => {});
+    else if (kind === 'conversations' || kind === 'read') {
+      refreshConversations().catch(() => {});
+      if (kind === 'conversations') refreshCircle().catch(() => {});
+    }
     else if (kind === 'profiles') {
       refreshConversations().catch(() => {});
       refreshMe().catch(() => {});
@@ -1007,6 +1012,7 @@ document.addEventListener('visibilitychange', () => {
   const open = getState().openConvId;
   if (open) markRead(open);
   clearNotifications();
+  refreshCircle().catch(() => {});
 });
 window.addEventListener('online', () => {
   if (!wanted) return;
@@ -1317,4 +1323,41 @@ export function convTitle(conv: Conv, meId: string | undefined) {
 
 export function otherMember(conv: Conv, meId: string | undefined) {
   return conv.kind === 'direct' ? conv.members.find((m) => m.id !== meId) ?? null : null;
+}
+
+// ------------------------------------------------------------------ Vlog your Day
+
+let circleLoading: Promise<void> | null = null;
+
+/** Load my friend group and who vlogs today (the server picks one person per day). */
+export function refreshCircle(): Promise<void> {
+  if (!getState().me) return Promise.resolve();
+  if (!circleLoading) {
+    circleLoading = (async () => {
+      const res = await api<{ circle: string | null; today: string; picks: { day: string; userId: string }[] }>('GET', '/api/circle');
+      if (res.circle && !getState().convs[res.circle]) await refreshConversations().catch(() => {});
+      setState({ circle: { id: res.circle, today: res.today, picks: res.picks } });
+    })().finally(() => { circleLoading = null; });
+  }
+  return circleLoading;
+}
+
+export async function createCircle(title: string, memberIds: string[]) {
+  const res = await api<{ conversation: ServerConv; skipped: string[] }>('POST', '/api/circle', { title, memberIds });
+  await upsertServerConv(res.conversation);
+  await refreshCircle();
+  return res.skipped;
+}
+
+export const VLOG_LIMITS = { videos: 3, seconds: 6 * 60, photos: 6 };
+
+/** What the picked person has posted on a day. */
+export function vlogPosts(list: Msg[] | undefined, day: string, userId: string | undefined) {
+  return (list ?? []).filter((m) => m.kind === 'media' && m.media?.vlog === day && m.senderId === userId);
+}
+
+export function vlogUsage(posts: Msg[]) {
+  const videos = posts.filter((m) => m.media!.kind === 'video');
+  const photos = posts.filter((m) => m.media!.kind === 'image');
+  return { videos: videos.length, seconds: videos.reduce((n, m) => n + (m.media!.duration ?? 0), 0), photos: photos.length };
 }

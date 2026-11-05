@@ -103,6 +103,8 @@ export interface MediaPayload {
   wave?: number[];
   caption?: string;
   viewOnce?: boolean;
+  /** Part of the Vlog your Day of this day (YYYY-MM-DD). */
+  vlog?: string;
 }
 
 export type Payload =
@@ -135,7 +137,7 @@ function cleanMedia(m: unknown): MediaPayload | null {
   if (!str(o.key, 64) || !B64.test(o.key as string) || !str(o.iv, 24) || !B64.test(o.iv as string)) return null;
   // Only plain media types; never anything a browser could run.
   if (!str(o.mime, 60) || !/^(image\/(jpeg|png|webp|gif)|video\/(mp4|quicktime|webm)|audio\/(mp4|webm|ogg|mpeg|aac)(;.*)?)$/.test(o.mime as string)) return null;
-  if (!num(o.size, 0, 30 * 1024 * 1024)) return null;
+  if (!num(o.size, 0, 50 * 1024 * 1024)) return null;
   const out: MediaPayload = { kind: o.kind as MediaPayload['kind'], path: o.path as string, key: o.key as string, iv: o.iv as string, mime: o.mime as string, size: o.size as number };
   if (num(o.w, 1, 20000)) out.w = o.w as number;
   if (num(o.h, 1, 20000)) out.h = o.h as number;
@@ -144,6 +146,7 @@ function cleanMedia(m: unknown): MediaPayload | null {
   if (Array.isArray(o.wave) && o.wave.length <= 64 && o.wave.every((v) => num(v, 0, 1))) out.wave = o.wave as number[];
   if (str(o.caption, 2000) && o.caption) out.caption = o.caption as string;
   if (o.viewOnce === true && o.kind === 'image') out.viewOnce = true;
+  if (typeof o.vlog === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(o.vlog) && o.kind !== 'voice') out.vlog = o.vlog;
   return out;
 }
 

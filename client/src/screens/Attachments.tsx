@@ -54,7 +54,7 @@ export function openAttachSheet(conv: Conv) {
   getNav().present((close) => <AttachSheet conv={conv} close={close} />, { variant: 'card' });
 }
 
-function pickFile(accept: string, capture?: boolean): Promise<File | null> {
+export function pickFile(accept: string, capture?: boolean): Promise<File | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -331,7 +331,7 @@ export function MediaView({ msg, meId }: { msg: Msg; meId: string }) {
   return <Visual msg={msg} />;
 }
 
-function useMediaUrl(msg: Msg, enabled = true) {
+export function useMediaUrl(msg: Msg, enabled = true) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -381,7 +381,7 @@ function ViewOnce({ msg, mine }: { msg: Msg; mine: boolean }) {
 }
 
 /** Full-screen photo/video viewer. Swipe down or tap × to close. */
-function openViewer(msg: Msg, url: string, onClosed?: () => void) {
+export function openViewer(msg: Msg, url: string, onClosed?: () => void) {
   getNav().present((close) => <Viewer msg={msg} url={url} close={close} />, { variant: 'full', onClose: onClosed });
 }
 

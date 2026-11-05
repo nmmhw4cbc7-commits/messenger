@@ -8,7 +8,7 @@ import { api } from './api';
 import { fromB64u, toB64u, type MediaPayload } from './crypto';
 import * as idb from './idb';
 
-export const MAX_FILE = 25 * 1024 * 1024;
+export const MAX_FILE = 48 * 1024 * 1024;
 
 export type MediaRef = MediaPayload;
 
@@ -32,7 +32,7 @@ async function decryptBytes(data: ArrayBuffer, ref: Pick<MediaRef, 'key' | 'iv' 
 
 /** Encrypt and upload; returns the completed reference. */
 export async function uploadMedia(convId: string, blob: Blob, ref: Omit<MediaRef, 'path' | 'key' | 'iv' | 'size'>): Promise<MediaRef> {
-  if (blob.size > MAX_FILE) throw new Error('This file is larger than 25 MB.');
+  if (blob.size > MAX_FILE) throw new Error('This file is larger than 48 MB.');
   const { data, key, iv } = await encryptBlob(blob);
   const { path, uploadUrl } = await api<{ path: string; uploadUrl: string }>('POST', '/api/attachments', { conversationId: convId, size: data.byteLength });
   const res = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: data });
@@ -127,9 +127,9 @@ export async function preparePhoto(file: Blob) {
 }
 
 /** Read size, duration and a poster frame from a video. */
-export function prepareVideo(file: File): Promise<{ blob: Blob; w: number; h: number; duration: number; thumb?: string }> {
+export function prepareVideo(file: Blob, maxSize: number = MAX_FILE): Promise<{ blob: Blob; w: number; h: number; duration: number; thumb?: string }> {
   return new Promise((resolve, reject) => {
-    if (file.size > MAX_FILE) return reject(new Error('Videos can be up to 25 MB.'));
+    if (file.size > maxSize) return reject(new Error('Videos can be up to 48 MB.'));
     const url = URL.createObjectURL(file);
     const video = document.createElement('video');
     video.muted = true;
@@ -140,7 +140,8 @@ export function prepareVideo(file: File): Promise<{ blob: Blob; w: number; h: nu
       if (done) return;
       done = true;
       URL.revokeObjectURL(url);
-      resolve({ blob: file, w: video.videoWidth || 16, h: video.videoHeight || 9, duration: Math.round(video.duration || 0), thumb });
+      const duration = Number.isFinite(video.duration) ? Math.round(video.duration) : 0;
+      resolve({ blob: file, w: video.videoWidth || 16, h: video.videoHeight || 9, duration, thumb });
     };
     video.onloadeddata = async () => {
       try {
@@ -233,4 +234,90 @@ export async function startRecording(): Promise<Recording> {
       });
     },
   };
+}
+
+// ------------------------------------------------------------------ video compression
+
+/** Can this browser re-encode a video (canvas + MediaRecorder)? */
+function recorderMime(): string | null {
+  if (typeof MediaRecorder === 'undefined' || !HTMLCanvasElement.prototype.captureStream) return null;
+  for (const t of ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']) {
+    if (MediaRecorder.isTypeSupported(t)) return t;
+  }
+  return null;
+}
+
+/**
+ * Shrink a long or large video so it fits the upload limit: it is played once
+ * (in real time) into a smaller canvas and recorded again with its sound.
+ * Must be started from a tap so the browser lets it play with sound.
+ */
+export async function compressVideo(file: Blob, duration: number, onProgress: (p: number) => void, signal?: AbortSignal): Promise<Blob> {
+  const mime = recorderMime();
+  if (!mime) throw new Error('This video is too large. Please choose a shorter one.');
+  const url = URL.createObjectURL(file);
+  const video = document.createElement('video');
+  video.src = url;
+  video.playsInline = true;
+  video.preload = 'auto';
+  // Keep it in the document (off screen) so every browser keeps decoding frames.
+  video.style.cssText = 'position:fixed;left:-10000px;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
+  document.body.append(video);
+  const audio = new AudioContext();
+  try {
+    await audio.resume().catch(() => {});
+    await new Promise<void>((resolve, reject) => {
+      video.onloadedmetadata = () => resolve();
+      video.onerror = () => reject(new Error('This video could not be opened.'));
+    });
+    const seconds = Math.max(1, duration || video.duration || 1);
+    // Fit into ~44 MB, never above 2.5 Mbit/s; smaller frames for lower rates.
+    const total = Math.min(2_600_000, (44 * 1024 * 1024 * 8) / seconds);
+    const videoBits = Math.max(400_000, total - 128_000);
+    const longSide = videoBits >= 1_800_000 ? 1280 : videoBits >= 1_000_000 ? 960 : 720;
+    const scale = Math.min(1, longSide / Math.max(video.videoWidth, video.videoHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(2, Math.round((video.videoWidth * scale) / 2) * 2);
+    canvas.height = Math.max(2, Math.round((video.videoHeight * scale) / 2) * 2);
+    const ctx = canvas.getContext('2d')!;
+    const stream = canvas.captureStream(30);
+    try {
+      const source = audio.createMediaElementSource(video);
+      const dest = audio.createMediaStreamDestination();
+      source.connect(dest);
+      for (const t of dest.stream.getAudioTracks()) stream.addTrack(t);
+    } catch {
+      // No sound track available: keep the picture.
+    }
+    const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: videoBits, audioBitsPerSecond: 128_000 });
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    const stopped = new Promise<void>((resolve) => { recorder.onstop = () => resolve(); });
+    let raf = 0;
+    const draw = () => {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      onProgress(Math.min(0.99, video.currentTime / seconds));
+      if (!video.ended) raf = requestAnimationFrame(draw);
+    };
+    const abort = () => { video.pause(); if (recorder.state !== 'inactive') recorder.stop(); };
+    signal?.addEventListener('abort', abort);
+    recorder.start(1000);
+    await video.play();
+    raf = requestAnimationFrame(draw);
+    await new Promise<void>((resolve) => { video.onended = () => resolve(); signal?.addEventListener('abort', () => resolve()); });
+    cancelAnimationFrame(raf);
+    if (recorder.state !== 'inactive') recorder.stop();
+    await stopped;
+    stream.getTracks().forEach((t) => t.stop());
+    if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
+    const out = new Blob(chunks, { type: mime.split(';')[0] });
+    if (!out.size) throw new Error('This video could not be compressed.');
+    onProgress(1);
+    return out;
+  } finally {
+    video.pause();
+    video.remove();
+    URL.revokeObjectURL(url);
+    audio.close().catch(() => {});
+  }
 }
