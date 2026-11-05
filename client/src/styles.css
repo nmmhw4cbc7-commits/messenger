@@ -169,6 +169,14 @@ html, body {
 
 body { position: fixed; inset: 0; }
 
+/* Feel like an app, not a web page: no text selection or link/image callouts on long press
+   (copying works from the message menu), except in fields where you type. */
+body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+input, textarea, [contenteditable] { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+img, video { -webkit-user-drag: none; }
+/* Long chat lists: rows outside the screen are not laid out or painted. */
+.chat-list > li { content-visibility: auto; contain-intrinsic-size: auto 76px; }
+
 #app {
   position: fixed;
   top: var(--app-top, 0px);
@@ -2463,3 +2471,4 @@ button.vlog-reaction:active { transform: scale(0.94); }
 /* Typing indicator */
 .chat-header-sub.typing, .chat-row-preview.typing { color: var(--signal); font-style: italic; }
 .vlog-action em { font-style: normal; font-size: 11.5px; font-weight: 500; opacity: 0.8; }
+.older-loading { height: 40px; }

@@ -146,6 +146,30 @@ function MessageList({ conv, messages, meId, onNotice, onReply, onMenu, nameOf }
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastCount = useRef(0);
+  // Only the newest messages are drawn; older ones are added while scrolling up (like native messengers).
+  const [limit, setLimit] = useState(PAGE);
+  useEffect(() => setLimit(PAGE), [conv.id]);
+  const start = Math.max(0, messages.length - limit);
+  const shown = start ? messages.slice(start) : messages;
+
+  // The list is bottom-anchored (column-reverse), so adding older messages at the top never moves the view.
+  const onScroll = () => {
+    const el = scrollRef.current;
+    if (!el || !start) return;
+    const fromTop = el.scrollHeight - el.clientHeight + el.scrollTop; // scrollTop is 0 at the bottom, negative upwards
+    if (fromTop < 600) setLimit((l) => l + PAGE);
+  };
+
+  // A tapped quote may point at an older message: draw enough to include it, then scroll there.
+  useEffect(() => {
+    const onWant = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      const i = messages.findIndex((m) => m.id === id);
+      if (i >= 0 && i < start) setLimit(messages.length - i + 10);
+    };
+    window.addEventListener('haven:want-message', onWant);
+    return () => window.removeEventListener('haven:want-message', onWant);
+  }, [messages, start]);
 
   // Jump to the newest message when we send one ourselves.
   useLayoutEffect(() => {
@@ -157,7 +181,7 @@ function MessageList({ conv, messages, meId, onNotice, onReply, onMenu, nameOf }
 
   const rows = useMemo(() => {
     const out: JSX.Element[] = [];
-    for (let i = 0; i < messages.length; i++) {
+    for (let i = start; i < messages.length; i++) {
       const m = messages[i];
       const prev = messages[i - 1];
       const next = messages[i + 1];
@@ -184,20 +208,27 @@ function MessageList({ conv, messages, meId, onNotice, onReply, onMenu, nameOf }
       );
     }
     return out;
-  }, [messages, conv, meId]);
+  }, [messages, conv, meId, start]);
+  void shown;
 
   return (
-    <div class="messages" ref={scrollRef}>
+    <div class="messages" ref={scrollRef} onScroll={onScroll}>
       <div class="messages-inner">
-        <div class="e2e-note">
-          <Lock size={14} />
-          <span>Messages are end-to-end encrypted. Only the people in this chat can read them, not even Haven.</span>
-        </div>
+        {start === 0 ? (
+          <div class="e2e-note">
+            <Lock size={14} />
+            <span>Messages are end-to-end encrypted. Only the people in this chat can read them, not even Haven.</span>
+          </div>
+        ) : (
+          <div class="older-loading" aria-hidden="true" />
+        )}
         {rows}
       </div>
     </div>
   );
 }
+
+const PAGE = 50;
 
 const URL_RE = /\bhttps?:\/\/[^\s<>"'`]+[^\s<>"'`.,;:!?)\]]/gi;
 
@@ -214,8 +245,13 @@ function linkify(text: string) {
   return parts;
 }
 
-function scrollToMessage(id: string) {
+function scrollToMessage(id: string, retry = true) {
   const el = document.querySelector<HTMLElement>(`.stack-item.top [data-msg="${CSS.escape(id)}"]`);
+  if (!el && retry) {
+    window.dispatchEvent(new CustomEvent('haven:want-message', { detail: id }));
+    requestAnimationFrame(() => requestAnimationFrame(() => scrollToMessage(id, false)));
+    return;
+  }
   if (!el) {
     toast('That message is no longer on this device.');
     return;

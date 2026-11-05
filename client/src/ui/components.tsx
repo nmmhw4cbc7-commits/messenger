@@ -11,7 +11,7 @@ export function Avatar({ id, name, src, size = 40, group = false }: { id: string
   useEffect(() => setFailed(false), [src]);
   const style = { width: `${size}px`, height: `${size}px`, fontSize: `${Math.round(size * 0.38)}px` };
   if (src && !failed) {
-    return <img class="avatar" src={src} alt="" style={style} draggable={false} onError={() => setFailed(true)} />;
+    return <img class="avatar" src={src} alt="" decoding="async" style={style} draggable={false} onError={() => setFailed(true)} />;
   }
   const text = group ? '' : initials(name);
   return (

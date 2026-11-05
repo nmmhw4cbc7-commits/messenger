@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { memo } from 'preact/compat';
 import { getState, useStore, type Conv, type Msg } from '../lib/store';
 import { avatarUrl, convTitle, displayName, otherMember, deleteChat, markRead, summarize, typingLabel } from '../lib/engine';
 import { formatListTime } from '../lib/format';
@@ -11,6 +12,11 @@ import { SettingsTab } from './Settings';
 import { describeSystem } from './system';
 import { DevicesScreen } from './Devices';
 import { TodayTab, VlogIcon } from './Today';
+
+// Tabs keep their own state; switching tabs must not redraw the other tabs.
+const TodayPane = memo(() => <TodayTab />);
+const ChatsPane = memo(() => <ChatsTab />);
+const SettingsPane = memo(() => <SettingsTab />);
 
 export function Home() {
   const nav = useNav();
@@ -51,9 +57,9 @@ export function Home() {
 
   return (
     <div class="home">
-      <div class={`tab-pane${tab === 'today' ? ' active' : ''}`}><TodayTab /></div>
-      <div class={`tab-pane${tab === 'chats' ? ' active' : ''}`}><ChatsTab /></div>
-      <div class={`tab-pane${tab === 'settings' ? ' active' : ''}`}><SettingsTab /></div>
+      <div class={`tab-pane${tab === 'today' ? ' active' : ''}`}><TodayPane /></div>
+      <div class={`tab-pane${tab === 'chats' ? ' active' : ''}`}><ChatsPane /></div>
+      <div class={`tab-pane${tab === 'settings' ? ' active' : ''}`}><SettingsPane /></div>
       <nav class="tabbar" aria-label="Main">
         <button class={tab === 'today' ? 'active' : ''} onClick={() => setTab('today')} aria-current={tab === 'today'}>
           <span class="tab-icon">

@@ -386,7 +386,7 @@ function TimelineItem({ msg }: { msg: Msg }) {
         onClick={() => url && openViewer(msg, url)}
         aria-label={media.kind === 'video' ? 'Play video' : 'Open photo'}
       >
-        {url && media.kind === 'image' && <img src={url} alt="" draggable={false} />}
+        {url && media.kind === 'image' && <img src={url} alt="" draggable={false} decoding="async" />}
         {url && media.kind === 'video' && <video src={url} muted playsInline preload="metadata" />}
         {media.kind === 'video' && <span class="vlog-play">▶{media.duration ? <em>{formatDuration(media.duration)}</em> : null}</span>}
         {!url && !error && <span class="visual-loading"><Spinner /></span>}

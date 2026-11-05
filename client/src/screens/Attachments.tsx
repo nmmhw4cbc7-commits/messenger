@@ -355,7 +355,7 @@ function Visual({ msg }: { msg: Msg }) {
       onClick={(e) => { e.stopPropagation(); if (url) openViewer(msg, url); }}
       aria-label={media.kind === 'video' ? 'Play video' : 'Open photo'}
     >
-      {url && media.kind === 'image' && <img src={url} alt="" draggable={false} />}
+      {url && media.kind === 'image' && <img src={url} alt="" draggable={false} decoding="async" />}
       {url && media.kind === 'video' && <video src={url} muted playsInline preload="metadata" />}
       {media.kind === 'video' && <span class="visual-play"><Play size={22} />{media.duration ? <em>{formatDuration(media.duration)}</em> : null}</span>}
       {!url && !error && <span class="visual-loading"><Spinner /></span>}
@@ -417,7 +417,7 @@ function Viewer({ msg, url, close }: { msg: Msg; url: string; close: () => Promi
       {media.kind === 'video' ? (
         <video src={url} controls autoPlay playsInline />
       ) : (
-        <img src={url} alt="" draggable={false} />
+        <img src={url} alt="" draggable={false} decoding="async" />
       )}
       {media.caption && <p class="viewer-caption">{media.caption}</p>}
     </div>
