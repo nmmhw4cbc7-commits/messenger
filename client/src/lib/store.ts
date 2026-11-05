@@ -1,14 +1,23 @@
 import type { MediaPayload } from './crypto';
 import { useEffect, useReducer, useRef } from 'preact/hooks';
 
+export interface DeviceKey {
+  id: string;
+  encPub: string;
+  sigPub: string;
+}
+
 export interface Me {
   id: string;
   phone: string;
   name: string;
   about: string;
   avatarVersion: number;
-  keyVersion: number;
   hasPin: boolean;
+  /** This device. */
+  deviceId: string;
+  /** All devices of this account (this one included). */
+  devices: DeviceKey[];
   /** Secret name of this user's realtime channel. */
   inbox: string;
   readReceipts: boolean;
@@ -20,9 +29,7 @@ export interface Profile {
   name: string;
   about: string;
   avatarVersion: number;
-  encPub: string;
-  sigPub: string;
-  keyVersion: number;
+  devices: DeviceKey[];
 }
 
 export interface Member extends Profile {
@@ -89,9 +96,9 @@ export interface Conv {
 
 export interface Pin {
   userId: string;
-  encPub: string;
-  sigPub: string;
-  keyVersion: number;
+  devices: DeviceKey[];
+  /** Fingerprint of all device keys; changes when a device is added, removed or replaced. */
+  fp: string;
   verified: boolean;
   /** A verified contact's key changed; sending is paused until the user accepts it. */
   needsAck: boolean;

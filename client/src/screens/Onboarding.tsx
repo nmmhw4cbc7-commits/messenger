@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { Button, Screen, Avatar, Spinner, useAsync } from '../ui/components';
 import { PhoneField, type PhoneValue } from '../ui/PhoneField';
 import { goBack, useNav } from '../ui/nav';
+import { LinkDeviceScreen } from './Devices';
 import { Lock, Camera } from '../ui/icons';
 import { guessCountry, toE164, prettyPhone } from '../lib/phone';
 import { startVerification, checkVerification, submitPin, forgetDevice, updateProfile, uploadAvatar, avatarUrl, type Verification } from '../lib/engine';
@@ -43,7 +44,10 @@ export function Welcome() {
             <Button variant="plain" onClick={() => forgetDevice()}>Use another number</Button>
           </>
         ) : (
-          <Button onClick={() => nav.push(<PhoneScreen />)}><span class="cta-dot" aria-hidden="true" />Get started</Button>
+          <>
+            <Button onClick={() => nav.push(<PhoneScreen />)}><span class="cta-dot" aria-hidden="true" />Get started</Button>
+            <Button variant="plain" onClick={() => nav.push(<LinkDeviceScreen />)}>Link to an existing account</Button>
+          </>
         )}
       </div>
     </div>

@@ -176,32 +176,45 @@ async function enforce(key: string, limit: number, windowMs: number) {
 // deno-lint-ignore no-explicit-any
 type Row = Record<string, any>;
 
-const serializeMe = (u: Row) => ({
+type DeviceKey = { id: string; encPub: string; sigPub: string };
+
+async function devicesOf(userIds: string[]): Promise<Map<string, DeviceKey[]>> {
+  const map = new Map<string, DeviceKey[]>();
+  if (!userIds.length) return map;
+  const rows = await sql`select id, user_id, enc_pub, sig_pub from haven.devices where user_id = any(${userIds}) order by created_at, id`;
+  for (const r of rows) {
+    if (!map.has(r.user_id)) map.set(r.user_id, []);
+    map.get(r.user_id)!.push({ id: r.id, encPub: r.enc_pub, sigPub: r.sig_pub });
+  }
+  return map;
+}
+
+const serializeMe = (u: Row, device: Row, devices: DeviceKey[]) => ({
   id: u.id,
   phone: u.phone,
   name: u.name,
   about: u.about,
   avatarVersion: Number(u.avatar_version),
-  keyVersion: u.key_version,
   hasPin: Boolean(u.pin_hash),
-  inbox: u.inbox_token,
   readReceipts: u.read_receipts !== false,
+  deviceId: device.id,
+  inbox: device.inbox_token,
+  devices,
 });
 
-const publicProfile = (u: Row) => ({
+const publicProfile = (u: Row, devices: DeviceKey[] = []) => ({
   id: u.id,
   phone: u.phone,
   name: u.name,
   about: u.about,
   avatarVersion: Number(u.avatar_version),
-  encPub: u.enc_pub,
-  sigPub: u.sig_pub,
-  keyVersion: u.key_version,
+  devices,
 });
 
-async function loadMe(id: string) {
-  const [u] = await sql`select * from haven.users where id = ${id}`;
-  return serializeMe(u);
+async function loadMe(userId: string, deviceId: string) {
+  const [u] = await sql`select * from haven.users where id = ${userId}`;
+  const [d] = await sql`select * from haven.devices where id = ${deviceId}`;
+  return serializeMe(u, d, (await devicesOf([userId])).get(userId) ?? []);
 }
 
 // ------------------------------------------------------------------ sessions
@@ -219,19 +232,19 @@ function readCookie(req: Request, name: string) {
   return null;
 }
 
-async function createSession(reply: Reply, userId: string) {
+async function createSession(reply: Reply, userId: string, deviceId: string) {
   const token = newToken();
   const t = now();
-  await sql`insert into haven.sessions (token_hash, user_id, created_at, expires_at, last_used_at)
-            values (${sha256(token)}, ${userId}, ${t}, ${t + SESSION_DAYS * DAY}, ${t})`;
+  await sql`insert into haven.sessions (token_hash, user_id, device_id, created_at, expires_at, last_used_at)
+            values (${sha256(token)}, ${userId}, ${deviceId}, ${t}, ${t + SESSION_DAYS * DAY}, ${t})`;
   reply.cookie(sessionCookie(token, SESSION_DAYS * 86400));
 }
 
 async function currentUser(req: Request, reply: Reply): Promise<Row & { token_hash: string }> {
   const token = readCookie(req, COOKIE);
   if (!token || token.length < 40 || token.length > 64) throw new HttpError(401, 'unauthorized', 'Please sign in again.');
-  const [row] = await sql`select s.token_hash, s.expires_at as s_expires, s.last_used_at, u.*
-                          from haven.sessions s join haven.users u on u.id = s.user_id
+  const [row] = await sql`select s.token_hash, s.expires_at as s_expires, s.last_used_at, s.device_id, d.inbox_token, u.*
+                          from haven.sessions s join haven.users u on u.id = s.user_id join haven.devices d on d.id = s.device_id
                           where s.token_hash = ${sha256(token)}`;
   const t = now();
   if (!row || Number(row.s_expires) < t) throw new HttpError(401, 'unauthorized', 'Please sign in again.');
@@ -240,17 +253,20 @@ async function currentUser(req: Request, reply: Reply): Promise<Row & { token_ha
     const expires = extend ? t + SESSION_DAYS * DAY : Number(row.s_expires);
     await sql`update haven.sessions set last_used_at = ${t}, expires_at = ${expires} where token_hash = ${row.token_hash}`;
     await sql`update haven.users set last_active_at = ${t} where id = ${row.id}`;
+    await sql`update haven.devices set last_active_at = ${t} where id = ${row.device_id}`;
     if (extend) reply.cookie(sessionCookie(token, SESSION_DAYS * 86400));
   }
-  return row as Row & { token_hash: string };
+  return row as Row & { token_hash: string; device_id: string };
 }
+
+const meOf = (user: Row) => loadMe(user.id, user.device_id);
 
 // ------------------------------------------------------------------ realtime & push
 
 /** Tell users' apps to sync. The hint carries no data; the channel name is a per-user secret. */
 async function broadcast(userIds: string[], event: 'sync' | 'conversations' | 'profiles' | 'signout' | 'read') {
   if (!userIds.length) return;
-  const rows = await sql`select inbox_token from haven.users where id = any(${userIds})`;
+  const rows = await sql`select inbox_token from haven.devices where user_id = any(${userIds})`;
   if (!rows.length) return;
   await fetch(`${SUPABASE_URL}/realtime/v1/api/broadcast`, {
     method: 'POST',
@@ -433,49 +449,39 @@ async function telegramWebhook(req: Request) {
 
 // ------------------------------------------------------------------ sign-in
 
-async function completeSignIn(reply: Reply, phone: string, encPub: string, sigPub: string) {
+/**
+ * Sign in with a confirmed phone number. Same keys as a known device: that
+ * device signs in again. New keys: this becomes the account's only device and
+ * every other device is signed out (like registering on a new phone).
+ */
+async function completeSignIn(reply: Reply, phone: string, encPub: string, sigPub: string, deviceName: string) {
   const t = now();
-  const affected = new Set<string>();
   const result = await sql.begin(async (tx) => {
     let [user] = await tx`select * from haven.users where phone = ${phone} for update`;
     let isNew = false;
-    const oldInbox = user?.inbox_token as string | undefined;
+    let oldTokens: string[] = [];
     if (!user) {
       isNew = true;
-      [user] = await tx`insert into haven.users (id, phone, enc_pub, sig_pub, key_version, inbox_token, created_at, last_active_at)
-                        values (${randomId()}, ${phone}, ${encPub}, ${sigPub}, 1, ${newToken()}, ${t}, ${t}) returning *`;
-    } else {
-      const keysChanged = user.enc_pub !== encPub || user.sig_pub !== sigPub;
-      await tx`delete from haven.sessions where user_id = ${user.id}`;
-      await tx`delete from haven.push_subscriptions where user_id = ${user.id}`;
-      if (keysChanged) {
-        await tx`delete from haven.message_recipients where user_id = ${user.id}`;
-        const convs = await tx`select conversation_id from haven.members where user_id = ${user.id}`;
-        for (const { conversation_id } of convs) {
-          const others = await tx`select user_id from haven.members where conversation_id = ${conversation_id} and user_id <> ${user.id}`;
-          if (!others.length) continue;
-          const [m] = await tx`insert into haven.messages (id, conversation_id, sender_id, kind, body, created_at)
-                               values (${randomId()}, ${conversation_id}, null, 'system', ${JSON.stringify({ type: 'key_changed', actorId: user.id })}, ${t})
-                               returning seq`;
-          for (const o of others) {
-            await tx`insert into haven.message_recipients (seq, user_id) values (${m.seq}, ${o.user_id})`;
-            affected.add(o.user_id);
-          }
-        }
-      }
-      [user] = await tx`update haven.users set
-          enc_pub = ${encPub}, sig_pub = ${sigPub},
-          key_version = key_version + ${keysChanged ? 1 : 0},
-          inbox_token = ${newToken()}, pin_failures = 0, pin_locked_until = 0, last_active_at = ${t}
-        where id = ${user.id} returning *`;
+      [user] = await tx`insert into haven.users (id, phone, created_at, last_active_at) values (${randomId()}, ${phone}, ${t}, ${t}) returning *`;
     }
-    return { user, isNew, oldInbox };
+    let [device] = await tx`select * from haven.devices where user_id = ${user.id} and enc_pub = ${encPub} and sig_pub = ${sigPub}`;
+    if (device) {
+      await tx`delete from haven.sessions where device_id = ${device.id}`;
+      [device] = await tx`update haven.devices set last_active_at = ${t} where id = ${device.id} returning *`;
+    } else {
+      oldTokens = (await tx`delete from haven.devices where user_id = ${user.id} returning inbox_token`).map((r: Row) => r.inbox_token);
+      [device] = await tx`insert into haven.devices (id, user_id, enc_pub, sig_pub, inbox_token, name, created_at, last_active_at)
+                          values (${randomId()}, ${user.id}, ${encPub}, ${sigPub}, ${newToken()}, ${deviceName}, ${t}, ${t}) returning *`;
+    }
+    await tx`update haven.users set pin_failures = 0, pin_locked_until = 0, last_active_at = ${t} where id = ${user.id}`;
+    return { user, device, isNew, oldTokens, keysChanged: oldTokens.length > 0 };
   });
-  // Tell the previous device (on its old channel) that its session has ended.
-  if (result.oldInbox) await broadcastTopic(`inbox:${result.oldInbox}`, 'signout');
-  if (affected.size) await notifyMessages([...affected]);
-  await createSession(reply, result.user.id);
-  return { status: 'ok', isNew: result.isNew, me: serializeMe(result.user) };
+  // Tell the previous devices (on their old channels) that their session has ended.
+  for (const tok of result.oldTokens) await broadcastTopic(`inbox:${tok}`, 'signout');
+  // Contacts refresh keys and see the safety number change.
+  if (result.keysChanged) await broadcast(await contactsOf(result.user.id), 'profiles');
+  await createSession(reply, result.user.id, result.device.id);
+  return { status: 'ok', isNew: result.isNew, me: await loadMe(result.user.id, result.device.id) };
 }
 
 // ------------------------------------------------------------------ conversation helpers
@@ -506,9 +512,10 @@ async function hasBlocked(blockerId: string, blockedId: string) {
 async function serializeConversations(convs: Row[], userId: string) {
   if (!convs.length) return [];
   const ids = convs.map((c) => c.id);
-  const members = await sql`select m.conversation_id, m.role, m.joined_at, m.last_read_at, u.read_receipts, u.id, u.phone, u.name, u.about, u.avatar_version, u.enc_pub, u.sig_pub, u.key_version
+  const members = await sql`select m.conversation_id, m.role, m.joined_at, m.last_read_at, u.read_receipts, u.id, u.phone, u.name, u.about, u.avatar_version
                             from haven.members m join haven.users u on u.id = m.user_id
                             where m.conversation_id = any(${ids}) order by m.joined_at, u.id`;
+  const devices = await devicesOf([...new Set(members.map((m) => m.id as string))]);
   return convs.map((c) => {
     const list = members.filter((m) => m.conversation_id === c.id);
     return {
@@ -520,7 +527,7 @@ async function serializeConversations(convs: Row[], userId: string) {
       updatedAt: Number(c.updated_at),
       myRole: list.find((m) => m.id === userId)?.role ?? 'member',
       // Read positions are only shared by people who keep read receipts on.
-      members: list.map((m) => ({ ...publicProfile(m), role: m.role, lastReadAt: m.read_receipts ? Number(m.last_read_at) : 0 })),
+      members: list.map((m) => ({ ...publicProfile(m, devices.get(m.id) ?? []), role: m.role, lastReadAt: m.read_receipts ? Number(m.last_read_at) : 0 })),
     };
   });
 }
@@ -530,13 +537,21 @@ async function oneConversation(id: string, userId: string) {
   return (await serializeConversations([c], userId))[0];
 }
 
+/** Queue a message for every device of these users (optionally except one device). */
+// deno-lint-ignore no-explicit-any
+async function queueFor(tx: any, seq: number | string, userIds: string[], exceptDevice: string | null = null) {
+  if (!userIds.length) return;
+  await tx`insert into haven.message_recipients (seq, device_id)
+           select ${seq}, id from haven.devices where user_id = any(${userIds}) and id is distinct from ${exceptDevice}`;
+}
+
 // deno-lint-ignore no-explicit-any
 async function systemEvent(tx: any, conversationId: string, body: unknown, recipients: string[]) {
   if (!recipients.length) return;
   const t = now();
   const [m] = await tx`insert into haven.messages (id, conversation_id, sender_id, kind, body, created_at)
                        values (${randomId()}, ${conversationId}, null, 'system', ${JSON.stringify(body)}, ${t}) returning seq`;
-  for (const id of recipients) await tx`insert into haven.message_recipients (seq, user_id) values (${m.seq}, ${id})`;
+  await queueFor(tx, m.seq, recipients);
   await tx`update haven.conversations set updated_at = ${t} where id = ${conversationId}`;
 }
 
@@ -568,7 +583,7 @@ function validEnvelope(e: unknown): boolean {
   if (!str(1, 100, B64URL)(env.eph) || !str(1, 24, B64URL)(env.iv) || !str(1, 96 * 1024, B64URL)(env.ct) || !str(1, 120, B64URL)(env.sig)) return false;
   if (!env.keys || typeof env.keys !== 'object' || Array.isArray(env.keys)) return false;
   const entries = Object.entries(env.keys as Row);
-  if (entries.length > MAX_GROUP) return false;
+  if (entries.length > MAX_GROUP * 4) return false; // several devices per member
   return entries.every(([id, k]) =>
     ID_RE.test(id) && k && typeof k === 'object' && Object.keys(k).every((x) => ['kv', 'iv', 'k'].includes(x)) &&
     int(1)(k.kv) && str(1, 24, B64URL)(k.iv) && str(1, 80, B64URL)(k.k));
@@ -583,6 +598,7 @@ async function cleanup() {
   await sql`delete from haven.sessions where expires_at < ${t}`;
   await sql`delete from haven.verifications where expires_at < ${t - HOUR}`;
   await sql`delete from haven.pin_challenges where expires_at < ${t}`;
+  await sql`delete from haven.link_requests where expires_at < ${t}`;
   await sql`delete from haven.rate_limits where reset_at < ${t}`;
   await sql`delete from haven.messages where created_at < ${t - RETENTION_DAYS * DAY}`;
   await sql`delete from haven.messages m where not exists (select 1 from haven.message_recipients r where r.seq = m.seq)`;
@@ -623,8 +639,8 @@ route('POST', '/auth/start', async ({ body, ip }) => {
 }, false);
 
 route('POST', '/auth/verify', async ({ body, reply, ip }) => {
-  const b = shape<{ verifyId: string; pollSecret: string; encPub: string; sigPub: string }>(body, {
-    verifyId: [isId, true], pollSecret: [str(40, 64), true], encPub: [PUBKEY, true], sigPub: [PUBKEY, true],
+  const b = shape<{ verifyId: string; pollSecret: string; encPub: string; sigPub: string; deviceName?: string }>(body, {
+    verifyId: [isId, true], pollSecret: [str(40, 64), true], encPub: [PUBKEY, true], sigPub: [PUBKEY, true], deviceName: [str(0, 60), false],
   });
   await enforce(`verify:ip:${ip}`, 1200, 10 * MIN);
   await enforce(`verify:id:${b.verifyId}`, 600, 10 * MIN);
@@ -650,7 +666,7 @@ route('POST', '/auth/verify', async ({ body, reply, ip }) => {
               values (${sha256(challenge)}, ${v.phone}, ${b.encPub}, ${b.sigPub}, ${now() + 10 * MIN})`;
     return { status: 'pin_required', challenge };
   }
-  return completeSignIn(reply, v.phone, b.encPub, b.sigPub);
+  return completeSignIn(reply, v.phone, b.encPub, b.sigPub, cleanLine(b.deviceName ?? '', 40));
 }, false);
 
 route('POST', '/auth/pin', async ({ body, reply, ip }) => {
@@ -661,7 +677,7 @@ route('POST', '/auth/pin', async ({ body, reply, ip }) => {
   const [user] = await sql`select id, pin_hash, pin_failures, pin_locked_until from haven.users where phone = ${pending.phone}`;
   const finish = async () => {
     await sql`delete from haven.pin_challenges where token_hash = ${pending.token_hash}`;
-    return completeSignIn(reply, pending.phone, pending.enc_pub, pending.sig_pub);
+    return completeSignIn(reply, pending.phone, pending.enc_pub, pending.sig_pub, '');
   };
   if (!user?.pin_hash) return finish();
   if (Number(user.pin_locked_until) > now()) {
@@ -679,15 +695,90 @@ route('POST', '/auth/pin', async ({ body, reply, ip }) => {
 
 route('POST', '/auth/logout', async ({ reply, req }) => {
   const user = await currentUser(req, reply);
-  await sql`delete from haven.sessions where token_hash = ${user.token_hash}`;
-  await sql`delete from haven.push_subscriptions where user_id = ${user.id}`;
+  // Signing out removes this device (its keys, queued messages and push subscription).
+  await sql`delete from haven.devices where id = ${user.device_id}`;
   reply.cookie(sessionCookie('', 0));
+  await broadcast(await contactsOf(user.id), 'profiles');
   return ok;
 }, false);
 
+// ---- linked devices (QR code / pairing code)
+
+const LINK_CODE = /^[A-Z2-9]{12}$/;
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function newLinkCode() {
+  const bytes = randomBytes(12);
+  return Array.from(bytes, (b) => CODE_ALPHABET[b % 32]).join('');
+}
+
+// The new device asks to be linked and shows the code as a QR code.
+route('POST', '/link/start', async ({ body, ip }) => {
+  const b = shape<{ encPub: string; sigPub: string; name: string }>(body, { encPub: [PUBKEY, true], sigPub: [PUBKEY, true], name: [str(0, 60), true] });
+  await enforce(`link:ip:${ip}`, 30, HOUR);
+  if (!(await isValidP256Key(b.encPub, 'ECDH')) || !(await isValidP256Key(b.sigPub, 'ECDSA'))) {
+    throw new HttpError(400, 'invalid_keys', 'Your device produced invalid keys. Please reload and try again.');
+  }
+  const id = randomId();
+  const code = newLinkCode();
+  const pollSecret = newToken();
+  const t = now();
+  await sql`insert into haven.link_requests (id, code_hash, poll_hash, enc_pub, sig_pub, name, expires_at, created_at)
+            values (${id}, ${sha256(code)}, ${sha256(pollSecret)}, ${b.encPub}, ${b.sigPub}, ${cleanLine(b.name, 40)}, ${t + 5 * MIN}, ${t})`;
+  return { linkId: id, code, pollSecret, expiresAt: t + 5 * MIN };
+}, false);
+
+// A signed-in device scans the code and approves.
+route('POST', '/link/approve', async ({ req, reply, body }) => {
+  const user = await currentUser(req, reply);
+  const { code } = shape<{ code: string }>(body, { code: [str(12, 12, LINK_CODE), true] });
+  await enforce(`link:approve:${user.id}`, 10, HOUR);
+  const [r] = await sql`update haven.link_requests set user_id = ${user.id}
+                        where code_hash = ${sha256(code)} and user_id is null and expires_at > ${now()} returning name`;
+  if (!r) throw new HttpError(400, 'link_invalid', 'This code is not valid or has expired. Show a new code on the other device.');
+  return { ok: true, name: r.name };
+});
+
+// The new device waits for approval, then gets its own device and session.
+route('POST', '/link/poll', async ({ body, reply, ip }) => {
+  const b = shape<{ linkId: string; pollSecret: string }>(body, { linkId: [isId, true], pollSecret: [str(40, 64), true] });
+  await enforce(`link:poll:${ip}`, 600, 10 * MIN);
+  const [r] = await sql`select * from haven.link_requests where id = ${b.linkId}`;
+  if (!r || !safeEqual(r.poll_hash, sha256(b.pollSecret)) || Number(r.expires_at) < now()) {
+    throw new HttpError(400, 'link_expired', 'This code expired. Show a new one.');
+  }
+  if (!r.user_id) return { status: 'pending' };
+  const used = await sql`delete from haven.link_requests where id = ${r.id} returning id`;
+  if (!used.length) throw new HttpError(400, 'link_expired', 'This code expired. Show a new one.');
+  const t = now();
+  const [device] = await sql`insert into haven.devices (id, user_id, enc_pub, sig_pub, inbox_token, name, created_at, last_active_at)
+                             values (${randomId()}, ${r.user_id}, ${r.enc_pub}, ${r.sig_pub}, ${newToken()}, ${r.name}, ${t}, ${t}) returning *`;
+  await createSession(reply, r.user_id, device.id);
+  await broadcast(await contactsOf(r.user_id), 'profiles');
+  await broadcast([r.user_id], 'profiles');
+  return { status: 'ok', me: await loadMe(r.user_id, device.id) };
+}, false);
+
+route('GET', '/devices', async ({ req, reply }) => {
+  const user = await currentUser(req, reply);
+  const rows = await sql`select id, name, created_at, last_active_at from haven.devices where user_id = ${user.id} order by created_at`;
+  return {
+    devices: rows.map((d) => ({ id: d.id, name: d.name, createdAt: Number(d.created_at), lastActiveAt: Number(d.last_active_at), current: d.id === user.device_id })),
+  };
+});
+
+route('DELETE', '/devices/:deviceId', async ({ req, reply, params }) => {
+  const user = await currentUser(req, reply);
+  const [d] = await sql`delete from haven.devices where id = ${params.deviceId} and user_id = ${user.id} returning inbox_token`;
+  if (!d) throw new HttpError(404, 'not_found');
+  await broadcastTopic(`inbox:${d.inbox_token}`, 'signout');
+  await broadcast(await contactsOf(user.id), 'profiles');
+  await broadcast([user.id], 'profiles');
+  return ok;
+});
+
 // ---- me
 
-route('GET', '/me', async ({ req, reply }) => ({ me: serializeMe(await currentUser(req, reply)) }));
+route('GET', '/me', async ({ req, reply }) => ({ me: await meOf(await currentUser(req, reply)) }));
 
 route('PATCH', '/me', async ({ req, reply, body }) => {
   const user = await currentUser(req, reply);
@@ -702,7 +793,7 @@ route('PATCH', '/me', async ({ req, reply, body }) => {
   }
   if (b.about !== undefined) await sql`update haven.users set about = ${cleanLine(b.about, 140)} where id = ${user.id}`;
   await broadcast(await contactsOf(user.id), 'profiles');
-  return { me: await loadMe(user.id) };
+  return { me: await meOf(user) };
 });
 
 route('PUT', '/me/avatar', async ({ req, reply, raw }) => {
@@ -718,7 +809,7 @@ route('PUT', '/me/avatar', async ({ req, reply, raw }) => {
     await tx`update haven.users set avatar_version = ${t} where id = ${user.id}`;
   });
   await broadcast(await contactsOf(user.id), 'profiles');
-  return { me: await loadMe(user.id) };
+  return { me: await meOf(user) };
 });
 
 route('DELETE', '/me/avatar', async ({ req, reply }) => {
@@ -728,7 +819,7 @@ route('DELETE', '/me/avatar', async ({ req, reply }) => {
     await tx`update haven.users set avatar_version = 0 where id = ${user.id}`;
   });
   await broadcast(await contactsOf(user.id), 'profiles');
-  return { me: await loadMe(user.id) };
+  return { me: await meOf(user) };
 });
 
 route('PUT', '/me/pin', async ({ req, reply, body }) => {
@@ -736,7 +827,7 @@ route('PUT', '/me/pin', async ({ req, reply, body }) => {
   const { pin } = shape<{ pin: string }>(body, { pin: [str(4, 12, /^\d+$/), true] });
   await enforce(`setpin:${user.id}`, 10, HOUR);
   await sql`update haven.users set pin_hash = ${await hashPin(pin)}, pin_failures = 0, pin_locked_until = 0 where id = ${user.id}`;
-  return { me: await loadMe(user.id) };
+  return { me: await meOf(user) };
 });
 
 route('DELETE', '/me/pin', async ({ req, reply, body }) => {
@@ -745,7 +836,7 @@ route('DELETE', '/me/pin', async ({ req, reply, body }) => {
   await enforce(`setpin:${user.id}`, 10, HOUR);
   if (user.pin_hash && !(await verifyPin(pin, user.pin_hash))) throw new HttpError(400, 'invalid_pin', 'Wrong PIN.');
   await sql`update haven.users set pin_hash = null where id = ${user.id}`;
-  return { me: await loadMe(user.id) };
+  return { me: await meOf(user) };
 });
 
 route('DELETE', '/me', async ({ req, reply, body }) => {
@@ -792,13 +883,13 @@ route('POST', '/users/lookup', async ({ req, reply, body }) => {
   const [found] = await sql`select * from haven.users where phone = ${phone}`;
   if (!found || !found.name) return { found: false, phone };
   if (found.id === user.id) throw new HttpError(400, 'is_self', 'That is your own number.');
-  return { found: true, phone, user: publicProfile(found) };
+  return { found: true, phone, user: publicProfile(found, (await devicesOf([found.id])).get(found.id) ?? []) };
 });
 
 route('GET', '/blocks', async ({ req, reply }) => {
   const user = await currentUser(req, reply);
   const rows = await sql`select u.* from haven.blocks b join haven.users u on u.id = b.blocked_id where b.blocker_id = ${user.id} order by b.created_at desc`;
-  return { blocked: rows.map(publicProfile) };
+  return { blocked: rows.map((r) => publicProfile(r)) };
 });
 
 route('PUT', '/blocks/:userId', async ({ req, reply, params }) => {
@@ -948,7 +1039,8 @@ route('DELETE', '/conversations/:id/members/:userId', async ({ req, reply, param
   if (!before.includes(target)) throw new HttpError(404, 'not_found');
   await sql.begin(async (tx) => {
     await tx`delete from haven.members where conversation_id = ${conv.id} and user_id = ${target}`;
-    await tx`delete from haven.message_recipients where user_id = ${target} and seq in (select seq from haven.messages where conversation_id = ${conv.id})`;
+    await tx`delete from haven.message_recipients where device_id in (select id from haven.devices where user_id = ${target})
+             and seq in (select seq from haven.messages where conversation_id = ${conv.id})`;
     const after = before.filter((id) => id !== target);
     if (!after.length) {
       await tx`delete from haven.conversations where id = ${conv.id}`;
@@ -979,25 +1071,29 @@ route('POST', '/conversations/:id/messages', async ({ req, reply, params, body }
     throw new HttpError(409, 'duplicate_id');
   }
 
-  const members = await sql`select u.id, u.key_version from haven.members m join haven.users u on u.id = m.user_id where m.conversation_id = ${conv.id}`;
-  const versions = new Map(members.map((m) => [m.id as string, m.key_version as number]));
-  for (const [uid, k] of Object.entries(b.envelope.keys as Record<string, { kv: number }>)) {
-    if (!versions.has(uid)) throw new HttpError(409, 'members_changed', 'The members of this chat changed.');
-    if (versions.get(uid) !== k.kv) throw new HttpError(409, 'keys_changed', 'A safety number in this chat changed.');
+  // Every device of every member (except the sending device) needs a wrapped key, and nobody else.
+  const memberRows = await sql`select user_id from haven.members where conversation_id = ${conv.id}`;
+  const memberList = memberRows.map((m) => m.user_id as string);
+  const devices = await sql`select id, user_id from haven.devices where user_id = any(${memberList})`;
+  const expected = new Set(devices.filter((d) => d.id !== user.device_id).map((d) => d.id as string));
+  const given = Object.keys(b.envelope.keys as Row);
+  if (given.length !== expected.size || given.some((id) => !expected.has(id))) {
+    throw new HttpError(409, 'devices_changed', 'The devices in this chat changed.');
   }
-  for (const m of members) if (m.id !== user.id && !b.envelope.keys[m.id]) throw new HttpError(409, 'members_changed', 'The members of this chat changed.');
 
   const blockers = new Set((await sql`select blocker_id from haven.blocks where blocked_id = ${user.id}`).map((r) => r.blocker_id));
-  const recipients = members.map((m) => m.id as string).filter((uid) => uid !== user.id && !blockers.has(uid));
+  const recipientUsers = memberList.filter((uid) => !blockers.has(uid));
   const t = now();
-  if (recipients.length) {
+  const hasRecipients = devices.some((d) => d.id !== user.device_id && recipientUsers.includes(d.user_id));
+  if (hasRecipients) {
     await sql.begin(async (tx) => {
       const [m] = await tx`insert into haven.messages (id, conversation_id, sender_id, kind, body, created_at)
                            values (${b.id}, ${conv.id}, ${user.id}, 'msg', ${JSON.stringify(b.envelope)}, ${t}) returning seq`;
-      for (const uid of recipients) await tx`insert into haven.message_recipients (seq, user_id) values (${m.seq}, ${uid})`;
+      await queueFor(tx, m.seq, recipientUsers, user.device_id);
       await tx`update haven.conversations set updated_at = ${t} where id = ${conv.id}`;
     });
-    await notifyMessages(recipients);
+    await notifyMessages(recipientUsers.filter((uid) => uid !== user.id));
+    await broadcast([user.id], 'sync');
   }
   return { id: b.id, createdAt: t };
 });
@@ -1075,7 +1171,7 @@ route('GET', '/sync', async ({ req, reply, url }) => {
   if (!Number.isInteger(after) || after < 0 || !Number.isInteger(limit)) throw new HttpError(400, 'invalid_request');
   const rows = await sql`select m.seq, m.id, m.conversation_id, m.sender_id, m.kind, m.body, m.created_at
                          from haven.message_recipients r join haven.messages m on m.seq = r.seq
-                         where r.user_id = ${user.id} and r.seq > ${after} order by r.seq limit ${limit + 1}`;
+                         where r.device_id = ${user.device_id} and r.seq > ${after} order by r.seq limit ${limit + 1}`;
   return {
     more: rows.length > limit,
     messages: rows.slice(0, limit).map((m) => ({
@@ -1089,7 +1185,7 @@ route('POST', '/sync/ack', async ({ req, reply, body }) => {
   const user = await currentUser(req, reply);
   const { upTo } = shape<{ upTo: number }>(body, { upTo: [int(0), true] });
   await sql.begin(async (tx) => {
-    const seqs = await tx`delete from haven.message_recipients where user_id = ${user.id} and seq <= ${upTo} returning seq`;
+    const seqs = await tx`delete from haven.message_recipients where device_id = ${user.device_id} and seq <= ${upTo} returning seq`;
     if (seqs.length) {
       const list = seqs.map((s: Row) => s.seq);
       await tx`delete from haven.messages m where m.seq = any(${list}) and not exists (select 1 from haven.message_recipients r where r.seq = m.seq)`;
@@ -1115,9 +1211,9 @@ route('POST', '/push/subscribe', async ({ req, reply, body }) => {
   });
   await enforce(`push:${user.id}`, 20, HOUR);
   if (!isAllowedPushEndpoint(b.endpoint)) throw new HttpError(400, 'invalid_endpoint', 'This browser’s push service is not supported.');
-  await sql`insert into haven.push_subscriptions (endpoint, user_id, p256dh, auth, created_at)
-            values (${b.endpoint}, ${user.id}, ${b.keys.p256dh}, ${b.keys.auth}, ${now()})
-            on conflict (endpoint) do update set user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth`;
+  await sql`insert into haven.push_subscriptions (endpoint, user_id, device_id, p256dh, auth, created_at)
+            values (${b.endpoint}, ${user.id}, ${user.device_id}, ${b.keys.p256dh}, ${b.keys.auth}, ${now()})
+            on conflict (endpoint) do update set user_id = excluded.user_id, device_id = excluded.device_id, p256dh = excluded.p256dh, auth = excluded.auth`;
   return ok;
 });
 

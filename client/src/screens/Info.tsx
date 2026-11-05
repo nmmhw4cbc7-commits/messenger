@@ -2,7 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { useStore, type Member } from '../lib/store';
 import {
   avatarUrl, convTitle, displayName, otherMember, clearChat, block, unblock, listBlocked, renameGroup, addMembers,
-  removeMember, leaveGroup, setRole, openDirect, setVerified, myPublicKeys, acceptKeyChange, setAlias,
+  removeMember, leaveGroup, setRole, openDirect, setVerified, myDevices, acceptKeyChange, setAlias,
 } from '../lib/engine';
 import { safetyNumber } from '../lib/crypto';
 import { prettyPhone } from '../lib/phone';
@@ -253,11 +253,11 @@ export function SafetyNumberScreen({ userId }: { userId: string }) {
   const [groups, setGroups] = useState<string[] | null>(null);
 
   useEffect(() => {
-    const mine = myPublicKeys();
-    if (!me || !pin || !mine) return;
+    const mine = myDevices();
+    if (!me || !pin || !mine.length || !pin.devices?.length) return;
     setGroups(null);
-    safetyNumber({ id: me.id, ...mine }, { id: userId, sigPub: pin.sigPub, encPub: pin.encPub }).then(setGroups);
-  }, [me?.id, pin?.sigPub, pin?.encPub, userId]);
+    safetyNumber({ id: me.id, devices: mine }, { id: userId, devices: pin.devices }).then(setGroups);
+  }, [me?.id, me?.devices?.length, pin?.fp, userId]);
 
   const name = displayName(person);
 

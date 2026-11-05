@@ -4,7 +4,7 @@
 import { api, ApiError, sessionEvents } from './api';
 import * as idb from './idb';
 import { createIdentity, decryptMessage, encryptMessage, randomId, type Envelope, type Identity } from './crypto';
-import { getState, setState, type Conv, type Me, type Member, type Msg, type Pin, type Profile, type ReplyRef, type SystemBody, type Theme } from './store';
+import { getState, setState, type Conv, type DeviceKey, type Me, type Member, type Msg, type Pin, type Profile, type ReplyRef, type SystemBody, type Theme } from './store';
 import type { Payload, MediaPayload } from './crypto';
 import { uploadMedia, storeLocalFile, forgetFile } from './media';
 
@@ -101,6 +101,7 @@ export async function checkVerification(v: Verification): Promise<'pending' | 'd
     pollSecret: v.pollSecret,
     encPub: pendingIdentity.encPub,
     sigPub: pendingIdentity.sigPub,
+    deviceName: deviceName(),
   });
   if (res.status === 'pending') return 'pending';
   if (res.status === 'pin_required') return { pinChallenge: res.challenge };
@@ -186,6 +187,9 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => appl
  * server later hands out a different key, every chat with that person gets a
  * notice, and if the person was verified, sending pauses until the user accepts.
  */
+/** Fingerprint over a person's device keys (ids excluded, so a pure re-numbering is not a change). */
+const fpOf = (devices: DeviceKey[]) => devices.map((d) => `${d.sigPub}:${d.encPub}`).sort().join(',');
+
 async function checkPins(members: Profile[]) {
   const me = getState().me;
   const pins = { ...getState().pins };
@@ -193,25 +197,29 @@ async function checkPins(members: Profile[]) {
   const notices: { userId: string; name: string }[] = [];
 
   for (const m of members) {
-    if (m.id === me?.id) continue;
-    const pin = pins[m.id];
+    if (m.id === me?.id || !m.devices) continue;
+    const pin = pins[m.id] as (Pin & { sigPub?: string; encPub?: string }) | undefined;
+    const fp = fpOf(m.devices);
+    // Pins from before linked devices stored one key pair directly.
+    const pinFp = pin ? (pin.fp ?? (pin.sigPub ? `${pin.sigPub}:${pin.encPub}` : '')) : '';
     if (!pin) {
-      pins[m.id] = { userId: m.id, encPub: m.encPub, sigPub: m.sigPub, keyVersion: m.keyVersion, verified: false, needsAck: false, history: [] };
+      pins[m.id] = { userId: m.id, devices: m.devices, fp, verified: false, needsAck: false, history: [] };
       changed.push(pins[m.id]);
-    } else if (pin.encPub !== m.encPub || pin.sigPub !== m.sigPub) {
+    } else if (pinFp !== fp) {
+      const oldSigs = (pin.devices ?? []).map((d) => d.sigPub).concat(pin.sigPub ? [pin.sigPub] : []);
+      // A device was only added: messages from the existing devices stay trusted, but tell the user.
       pins[m.id] = {
-        ...pin,
-        encPub: m.encPub,
-        sigPub: m.sigPub,
-        keyVersion: m.keyVersion,
+        userId: m.id,
+        devices: m.devices,
+        fp,
         verified: false,
         needsAck: pin.verified || pin.needsAck,
-        history: [pin.sigPub, ...pin.history.filter((k) => k !== pin.sigPub)].slice(0, 5),
+        history: [...new Set([...oldSigs, ...pin.history])].slice(0, 8),
       };
       changed.push(pins[m.id]);
-      notices.push({ userId: m.id, name: m.name || m.phone });
-    } else if (pin.keyVersion !== m.keyVersion) {
-      pins[m.id] = { ...pin, keyVersion: m.keyVersion };
+      if (m.devices.length) notices.push({ userId: m.id, name: m.name || m.phone });
+    } else if (!pin.fp || JSON.stringify(pin.devices) !== JSON.stringify(m.devices)) {
+      pins[m.id] = { userId: m.id, devices: m.devices, fp, verified: pin.verified, needsAck: pin.needsAck, history: pin.history };
       changed.push(pins[m.id]);
     }
   }
@@ -634,6 +642,12 @@ export async function flushOutbox() {
   }
 }
 
+/** Every device of every member, including my other devices, except this one. */
+function recipientsOf(conv: Conv) {
+  const myDevice = getState().me?.deviceId;
+  return conv.members.flatMap((m) => m.devices ?? []).filter((d) => d.id !== myDevice).map((d) => ({ id: d.id, encPub: d.encPub, keyVersion: 1 }));
+}
+
 function payloadOf(msg: Msg): Payload {
   switch (msg.kind) {
     case 'media':
@@ -674,7 +688,7 @@ async function deliver(msg: Msg): Promise<'sent' | 'failed' | 'offline' | 'pause
       }
       const payload = payloadOf(msg);
       const envelope = await encryptMessage(identity, me.id, conv.id, msg.id, payload,
-        others.map((m) => ({ id: m.id, encPub: m.encPub, keyVersion: m.keyVersion })));
+        recipientsOf(conv));
       const res = await api<{ id: string; createdAt: number }>('POST', `/api/conversations/${conv.id}/messages`, { id: msg.id, envelope });
       await updateMessage({ ...msg, status: 'sent', createdAt: res.createdAt });
       return 'sent';
@@ -683,7 +697,7 @@ async function deliver(msg: Msg): Promise<'sent' | 'failed' | 'offline' | 'pause
       if (err instanceof ApiError) {
         if (err.status === 0 || err.status >= 500 || err.status === 429) return 'offline';
         if (err.status === 401) return 'offline';
-        if (err.code === 'members_changed' || err.code === 'keys_changed') {
+        if (err.code === 'members_changed' || err.code === 'keys_changed' || err.code === 'devices_changed') {
           await refreshConversations().catch(() => {});
           continue;
         }
@@ -707,12 +721,13 @@ async function sendPayload(convId: string, payload: Payload) {
     if (!conv || conv.left) throw new Error('This chat is no longer available.');
     const others = conv.members.filter((m) => m.id !== me.id);
     const id = randomId();
-    const envelope = await encryptMessage(identity, me.id, conv.id, id, payload, others.map((m) => ({ id: m.id, encPub: m.encPub, keyVersion: m.keyVersion })));
+    void others;
+    const envelope = await encryptMessage(identity, me.id, conv.id, id, payload, recipientsOf(conv));
     try {
       await api('POST', `/api/conversations/${conv.id}/messages`, { id, envelope });
       return;
     } catch (err) {
-      if (err instanceof ApiError && (err.code === 'members_changed' || err.code === 'keys_changed')) {
+      if (err instanceof ApiError && (err.code === 'members_changed' || err.code === 'keys_changed' || err.code === 'devices_changed')) {
         await refreshConversations().catch(() => {});
         continue;
       }
@@ -834,10 +849,14 @@ async function processBatch(batch: SyncMessage[]) {
       continue;
     }
 
-    if (!getState().convs[m.conversationId] || !getState().pins[m.senderId!]) await ensureFresh();
+    const fromMe = m.senderId === me.id;
+    if (!getState().convs[m.conversationId] || (!fromMe && !getState().pins[m.senderId!])) await ensureFresh();
     const tryDecrypt = () => {
-      const pin = getState().pins[m.senderId!];
-      return decryptMessage(identity!, me.id, m.conversationId, m.senderId!, m.id, m.body as Envelope, pin ? [pin.sigPub, ...pin.history] : []);
+      // My own messages from my other devices are checked against my account's device keys.
+      const sigs = fromMe
+        ? (getState().me?.devices ?? []).map((d) => d.sigPub)
+        : (() => { const pin = getState().pins[m.senderId!]; return pin ? [...(pin.devices ?? []).map((d) => d.sigPub), ...pin.history] : []; })();
+      return decryptMessage(identity!, me.deviceId, m.conversationId, m.senderId!, m.id, m.body as Envelope, sigs);
     };
     let result = await tryDecrypt();
     if (!result.ok && result.reason === 'bad_signature' && !refreshedOnce) {
@@ -858,7 +877,7 @@ async function processBatch(batch: SyncMessage[]) {
     }
     if (result.ok) {
       const p = result.payload;
-      const base = { id: m.id, convId: m.conversationId, senderId: m.senderId, createdAt: m.createdAt, sortKey: m.createdAt, status: 'received' as const };
+      const base = { id: m.id, convId: m.conversationId, senderId: m.senderId, createdAt: m.createdAt, sortKey: m.createdAt, status: (fromMe ? 'sent' : 'received') as 'sent' | 'received' };
       if (p.type === 'text') out.push({ ...base, kind: 'text', text: p.text, ...(p.reply ? { reply: p.reply } : {}) });
       else if (p.type === 'media') out.push({ ...base, kind: 'media', media: p.media, ...(p.reply ? { reply: p.reply } : {}) });
       else if (p.type === 'location') out.push({ ...base, kind: 'location', location: { lat: p.lat, lng: p.lng, acc: p.acc } });
@@ -953,7 +972,11 @@ function connect() {
     if (msg.event !== 'broadcast') return;
     const kind = msg.payload?.event;
     if (kind === 'sync') sync();
-    else if (kind === 'conversations' || kind === 'profiles' || kind === 'read') refreshConversations().catch(() => {});
+    else if (kind === 'conversations' || kind === 'read') refreshConversations().catch(() => {});
+    else if (kind === 'profiles') {
+      refreshConversations().catch(() => {});
+      refreshMe().catch(() => {});
+    }
     else if (kind === 'signout') api('GET', '/api/me').catch(() => {});
   };
   ws.onclose = () => {
@@ -1062,8 +1085,68 @@ export async function forgetDevice() {
   location.reload();
 }
 
-export function myPublicKeys() {
-  return identity ? { encPub: identity.encPub, sigPub: identity.sigPub } : null;
+export function myDevices(): DeviceKey[] {
+  return getState().me?.devices ?? [];
+}
+
+// ------------------------------------------------------------------ linked devices
+
+export function deviceName() {
+  const ua = navigator.userAgent;
+  const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ? 'iPad'
+    : /Android/.test(ua) ? 'Android' : /Mac/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : 'Device';
+  const browser = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : '';
+  return browser ? `${os} · ${browser}` : os;
+}
+
+export interface LinkRequest {
+  linkId: string;
+  code: string;
+  pollSecret: string;
+  expiresAt: number;
+}
+
+/** New device: create keys and a pairing code to show as a QR code. */
+export async function startLink(): Promise<LinkRequest> {
+  pendingIdentity = await createIdentity('');
+  pendingIsStored = false;
+  return api<LinkRequest>('POST', '/api/link/start', { encPub: pendingIdentity.encPub, sigPub: pendingIdentity.sigPub, name: deviceName() });
+}
+
+/** New device: has the other device approved yet? */
+export async function checkLink(req: LinkRequest): Promise<boolean> {
+  const res = await api<{ status: 'pending' } | { status: 'ok'; me: Me }>('POST', '/api/link/poll', { linkId: req.linkId, pollSecret: req.pollSecret });
+  if (res.status === 'pending') return false;
+  pendingIdentity!.phone = res.me.phone;
+  await finishSignIn(res.me);
+  return true;
+}
+
+/** Signed-in device: approve a code scanned from the new device. */
+export async function approveLink(code: string) {
+  return api<{ ok: true; name: string }>('POST', '/api/link/approve', { code });
+}
+
+export interface LinkedDevice {
+  id: string;
+  name: string;
+  createdAt: number;
+  lastActiveAt: number;
+  current: boolean;
+}
+
+export async function listDevices() {
+  return (await api<{ devices: LinkedDevice[] }>('GET', '/api/devices')).devices;
+}
+
+export async function removeDevice(id: string) {
+  await api('DELETE', `/api/devices/${id}`);
+  await refreshMe();
+}
+
+export async function refreshMe() {
+  const res = await api<{ me: Me }>('GET', '/api/me');
+  await saveMe(res.me);
 }
 
 /** One-line summary of a message for chat lists and notifications. */

@@ -10,7 +10,8 @@ import { parsePhoneNumberFromString } from 'libphonenumber-js/min';
 import { errorMessage } from '../lib/api';
 import { Avatar, Button, Cell, Screen, Section, Segmented, Spinner, Toggle, NavButton, actionSheet, confirmAction, toast, useAsync, Empty } from '../ui/components';
 import { goBack, useNav } from '../ui/nav';
-import { Bell, Block, Camera, Lock, Logout, Moon, Shield, Trash, Info, CheckDouble } from '../ui/icons';
+import { Bell, Block, Camera, Lock, Logout, Moon, Shield, Trash, Info, CheckDouble, Key } from '../ui/icons';
+import { DevicesScreen } from './Devices';
 
 export function SettingsTab() {
   const nav = useNav();
@@ -39,6 +40,7 @@ export function SettingsTab() {
           right={<Toggle label="Read receipts" checked={me.readReceipts !== false} onChange={(v) => updateProfile({ readReceipts: v }).catch((err) => toast(errorMessage(err), 'error'))} />}
         />
         <Cell icon={<Block size={19} />} iconBg="ink" title="Blocked people" chevron onClick={() => nav.push(<BlockedPeople />)} />
+        <Cell icon={<Key size={19} />} iconBg="ink" title="Linked devices" value={String(me.devices?.length || 1)} chevron onClick={() => nav.push(<DevicesScreen />)} />
         <Cell icon={<Shield size={19} />} iconBg="ink" title="How Haven protects you" chevron onClick={() => nav.push(<SecurityInfo />)} />
       </Section>
 
@@ -55,7 +57,7 @@ export function SettingsTab() {
 
       <Section>
         <Cell icon={<Logout size={19} />} title="Sign out" onClick={async () => {
-          if (await confirmAction({ message: 'Signing out deletes your keys and all chats from this device. They cannot be restored.', confirm: 'Sign out', danger: true })) await signOut();
+          if (await confirmAction({ message: 'This device is removed from your account. Its keys and chats are deleted from it.', confirm: 'Sign out', danger: true })) await signOut();
         }} />
         <Cell icon={<Trash size={19} />} title="Delete account" danger chevron onClick={() => nav.push(<DeleteAccount />)} />
       </Section>

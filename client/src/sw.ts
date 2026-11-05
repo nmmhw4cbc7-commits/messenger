@@ -92,10 +92,11 @@ async function preview(): Promise<{ title: string; body: string; tag: string; co
   if (!res.ok) return null;
   const { messages } = (await res.json()) as { messages: SyncMessage[] };
   for (const m of [...messages].reverse()) {
-    if (m.kind !== 'msg' || !m.senderId) continue;
+    if (m.kind !== 'msg' || !m.senderId || m.senderId === me.id) continue;
     const [conv, pin] = await Promise.all([idbGet<Conv>('convs', m.conversationId), idbGet<Pin>('pins', m.senderId)]);
     if (!pin) continue;
-    const result = await decryptMessage(identity, me.id, m.conversationId, m.senderId, m.id, m.body as Envelope, [pin.sigPub, ...pin.history]);
+    const sigs = [...(pin.devices ?? []).map((d) => d.sigPub), ...pin.history];
+    const result = await decryptMessage(identity, me.deviceId, m.conversationId, m.senderId, m.id, m.body as Envelope, sigs);
     if (!result.ok) continue;
     const member = conv?.members.find((x) => x.id === m.senderId);
     const sender = aliases?.[m.senderId] || member?.name || member?.phone || 'Someone';

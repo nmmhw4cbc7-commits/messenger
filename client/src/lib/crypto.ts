@@ -314,9 +314,15 @@ async function fingerprint(userId: string, sigPub: string, encPub: string): Prom
   return digits;
 }
 
-/** 60 digits in 12 groups. Both people see the same number. */
-export async function safetyNumber(a: { id: string; sigPub: string; encPub: string }, b: { id: string; sigPub: string; encPub: string }) {
+type KeyOwner = { id: string; devices: { id: string; sigPub: string; encPub: string }[] };
+
+/** 60 digits in 12 groups, covering every device of both people. Both people see the same number. */
+export async function safetyNumber(a: KeyOwner, b: KeyOwner) {
+  const part = (o: KeyOwner) => {
+    const ds = [...o.devices].sort((x, y) => (x.sigPub < y.sigPub ? -1 : 1));
+    return fingerprint(o.id, ds.map((d) => d.sigPub).join(','), ds.map((d) => d.encPub).join(','));
+  };
   const [first, second] = [a, b].sort((x, y) => (x.id < y.id ? -1 : 1));
-  const digits = (await fingerprint(first.id, first.sigPub, first.encPub)) + (await fingerprint(second.id, second.sigPub, second.encPub));
+  const digits = (await part(first)) + (await part(second));
   return digits.match(/.{5}/g) as string[];
 }
