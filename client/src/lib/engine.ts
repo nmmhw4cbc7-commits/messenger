@@ -19,6 +19,9 @@ export async function boot() {
 
   identity = (await idb.get<Identity>('meta', 'identity')) ?? null;
   const me = (await idb.get<Me>('meta', 'me')) ?? null;
+  const aliases = (await idb.get<Record<string, string>>('meta', 'aliases').catch(() => undefined)) ?? {};
+  const pushPreview = (await idb.get<boolean>('meta', 'pushPreview').catch(() => undefined)) ?? true;
+  setState({ aliases, pushPreview });
   if (!identity || !me) {
     setState({ phase: 'signedOut', lastPhone: identity?.phone ?? '' });
     return;
@@ -934,8 +937,24 @@ export function myPublicKeys() {
   return identity ? { encPub: identity.encPub, sigPub: identity.sigPub } : null;
 }
 
-export function displayName(p: { name?: string; phone?: string } | null | undefined) {
-  return p?.name?.trim() || p?.phone || 'Unknown';
+export function displayName(p: { id?: string; name?: string; phone?: string } | null | undefined) {
+  const alias = p?.id ? getState().aliases[p.id] : '';
+  return alias || p?.name?.trim() || p?.phone || 'Unknown';
+}
+
+/** Save a contact under your own name for them (only on this device). Empty removes it. */
+export async function setAlias(userId: string, name: string) {
+  const aliases = { ...getState().aliases };
+  const clean = name.replace(/[\u0000-\u001F\u202A-\u202E\u2066-\u2069]/g, '').trim().slice(0, 40);
+  if (clean) aliases[userId] = clean;
+  else delete aliases[userId];
+  await idb.put('meta', aliases, 'aliases');
+  setState({ aliases });
+}
+
+export async function setPushPreview(on: boolean) {
+  await idb.put('meta', on, 'pushPreview');
+  setState({ pushPreview: on });
 }
 
 export function convTitle(conv: Conv, meId: string | undefined) {

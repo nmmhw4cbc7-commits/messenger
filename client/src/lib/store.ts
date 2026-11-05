@@ -103,6 +103,10 @@ export interface State {
   theme: Theme;
   sessionEnded: boolean;
   lastPhone: string;
+  /** Names the user gave contacts on this device (userId -> name). */
+  aliases: Record<string, string>;
+  /** Show sender and text in push notifications. */
+  pushPreview: boolean;
 }
 
 let state: State = {
@@ -116,6 +120,8 @@ let state: State = {
   theme: 'system',
   sessionEnded: false,
   lastPhone: '',
+  aliases: {},
+  pushPreview: true,
 };
 
 const listeners = new Set<() => void>();

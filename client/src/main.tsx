@@ -11,6 +11,9 @@ function trackViewport() {
   const update = () => {
     const height = vv ? vv.height : window.innerHeight;
     root.style.setProperty('--app-height', `${Math.round(height)}px`);
+    // iOS may shift the visual viewport when the keyboard opens; the app follows it,
+    // so headers, sheets and dialogs never end up off-screen.
+    root.style.setProperty('--app-top', `${Math.round(vv ? vv.offsetTop : 0)}px`);
     root.classList.toggle('keyboard-open', window.innerHeight - height > 120);
     if (window.scrollY !== 0) window.scrollTo(0, 0);
   };

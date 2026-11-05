@@ -121,7 +121,7 @@ async function register(page, national, e164, name, prefix) {
   await shot(a, 'a-07-chat');
 
   // Read receipts: B has the chat open, so A's messages show two (read) ticks
-  await a.locator('.stack-item.top .bubble-foot svg.read').first().waitFor({ timeout: 15000 });
+  await a.locator('.stack-item.top .bubble-meta svg.read').first().waitFor({ timeout: 15000 });
 
   // Long-press menu: B reacts with a heart and replies to A's message
   await b.locator('.stack-item.top .bubble-text', { hasText: 'Can you read this?' }).click({ button: 'right' });

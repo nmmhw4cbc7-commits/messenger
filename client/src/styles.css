@@ -171,7 +171,7 @@ body { position: fixed; inset: 0; }
 
 #app {
   position: fixed;
-  top: 0;
+  top: var(--app-top, 0px);
   left: 0;
   right: 0;
   height: var(--app-height, 100%);
@@ -1183,7 +1183,7 @@ button.cell:disabled { opacity: 0.5; }
 
 /* ------------------------------------------------------------------ sheets */
 
-.sheet-layer { position: fixed; inset: 0; z-index: 20; }
+.sheet-layer { position: absolute; inset: 0; z-index: 20; }
 .sheet-backdrop {
   position: absolute;
   inset: 0;
@@ -1789,7 +1789,7 @@ button.plain-row:active { background: var(--press); transition: none; }
 
 /* Long-press menu */
 .context-layer {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: 30;
   background: rgba(20, 20, 18, 0.28);
@@ -1912,3 +1912,51 @@ button.plain-row:active { background: var(--press); transition: none; }
 .row-actions .delete { background: var(--danger); }
 .chat-row { position: relative; z-index: 1; background: var(--bg); touch-action: pan-y; transition: transform 0.3s var(--ease); }
 .chat-row.dragging { transition: none; }
+
+/* Native-style alert dialog */
+.sheet-layer.alert { display: grid; place-items: center; }
+.sheet-layer.alert .sheet {
+  position: relative;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  width: 280px;
+  max-width: calc(100% - 48px);
+  padding: 0;
+  border-radius: 16px;
+  background: var(--bg-elevated);
+  box-shadow: 0 20px 60px rgba(20, 20, 18, 0.25), inset 0 0 0 0.5px var(--sep);
+  animation: alert-in 0.28s var(--ease) both;
+}
+.sheet-layer.alert.closing .sheet { animation: alert-out 0.18s ease both; }
+.sheet-layer.alert .sheet-backdrop { background: rgba(20, 20, 18, 0.35); }
+@keyframes alert-in { from { transform: scale(1.12); opacity: 0; } }
+@keyframes alert-out { to { transform: scale(0.96); opacity: 0; } }
+.alert-body { padding: 20px 18px 16px; text-align: center; }
+.alert-body strong { display: block; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+.alert-body p { margin-top: 6px; font-size: 14px; line-height: 1.4; color: var(--text-2); }
+.alert-buttons { display: flex; box-shadow: inset 0 0.5px 0 var(--sep); }
+.alert-buttons button { flex: 1; height: 48px; font-size: 17px; color: var(--ink); }
+.alert-buttons button + button { box-shadow: inset 0.5px 0 0 var(--sep); }
+.alert-buttons button.default, .alert-buttons button.danger { font-weight: 600; }
+.alert-buttons button.danger { color: var(--danger); }
+.alert-buttons button:active { background: var(--press); }
+.alert-buttons.stacked { flex-direction: column; }
+.alert-buttons.stacked button + button { box-shadow: inset 0 0.5px 0 var(--sep); }
+
+/* Time inside the bubble, floated so it can never cover the text */
+.bubble { display: flow-root; }
+.bubble-meta {
+  position: static;
+  float: right;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin: 8px -4px -4px 12px;
+  line-height: 1;
+  font-size: 10.5px;
+}
+.bubble-meta svg { flex: none; }
+.out .bubble-meta svg.read { color: var(--signal); }
+.bubble-meta svg.danger { color: var(--danger); }
+.in .bubble.failed .bubble-meta, .out .bubble.failed .bubble-meta { color: var(--danger); }

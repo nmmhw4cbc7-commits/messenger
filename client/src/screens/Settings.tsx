@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { useStore, type Profile, type Theme } from '../lib/store';
 import {
   avatarUrl, updateProfile, uploadAvatar, removeAvatar, setTheme, signOut, deleteAccount, setPin, removePin,
-  listBlocked, unblock, pushSupported, pushEnabled, enablePush, disablePush, displayName,
+  listBlocked, unblock, pushSupported, pushEnabled, enablePush, disablePush, displayName, setPushPreview,
 } from '../lib/engine';
 import { prepareAvatar } from '../lib/image';
 import { prettyPhone, toE164 } from '../lib/phone';
@@ -197,6 +197,7 @@ function BlockedPeople() {
 }
 
 function Notifications() {
+  const pushPreview = useStore((s) => s.pushPreview);
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [busy, run] = useAsync();
   const supported = pushSupported();
@@ -209,7 +210,7 @@ function Notifications() {
 
   return (
     <Screen back title="Notifications" grouped>
-      <Section footer="Notifications never contain the sender or the message. They only say that something new arrived, so nothing readable passes through Apple’s or Google’s servers.">
+      <Section footer="Messages are decrypted on this phone just for the notification. Apple’s and Google’s push servers never see names or text.">
         <Cell
           title="Message notifications"
           right={enabled === null ? <Spinner /> : (
@@ -219,6 +220,10 @@ function Notifications() {
               setEnabled(v);
             })} />
           )}
+        />
+        <Cell
+          title="Show name and message"
+          right={<Toggle label="Show name and message" checked={pushPreview} disabled={!enabled} onChange={(v) => setPushPreview(v)} />}
         />
       </Section>
       {!supported && (

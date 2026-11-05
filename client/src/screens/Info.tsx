@@ -2,7 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { useStore, type Member } from '../lib/store';
 import {
   avatarUrl, convTitle, displayName, otherMember, clearChat, block, unblock, listBlocked, renameGroup, addMembers,
-  removeMember, leaveGroup, setRole, openDirect, setVerified, myPublicKeys, acceptKeyChange,
+  removeMember, leaveGroup, setRole, openDirect, setVerified, myPublicKeys, acceptKeyChange, setAlias,
 } from '../lib/engine';
 import { safetyNumber } from '../lib/crypto';
 import { prettyPhone } from '../lib/phone';
@@ -20,6 +20,7 @@ function VerifiedLabel({ userId }: { userId: string }) {
 
 export function ContactInfo({ convId }: { convId: string }) {
   const nav = useNav();
+  const aliases = useStore((s) => s.aliases);
   const conv = useStore((s) => s.convs[convId]);
   const me = useStore((s) => s.me);
   const [blocked, setBlocked] = useState<boolean | null>(null);
@@ -33,6 +34,23 @@ export function ContactInfo({ convId }: { convId: string }) {
 
   if (!conv || !me) return <Screen back title="Info"><div /></Screen>;
   const name = convTitle(conv, me.id);
+  const alias = other ? aliases[other.id] : '';
+
+  const editName = () => {
+    if (!other) return;
+    getNav().present((close) => (
+      <RenameSheet
+        heading="Contact name"
+        initial={alias || other.name}
+        allowSame
+        close={close}
+        onSave={async (t) => {
+          await setAlias(other.id, t === other.name ? '' : t);
+          toast(t === other.name ? 'Name reset' : 'Contact saved');
+        }}
+      />
+    ));
+  };
 
   return (
     <Screen back title="" grouped>
@@ -40,8 +58,15 @@ export function ContactInfo({ convId }: { convId: string }) {
         <Avatar id={other?.id ?? conv.id} name={name} src={avatarUrl(other)} size={104} />
         <h1>{name}</h1>
         {other && <p class="hero-sub">{prettyPhone(other.phone)}</p>}
+        {alias && other?.name && <p class="hero-sub">Calls themselves “{other.name}”</p>}
         {other?.about && <p class="hero-about">{other.about}</p>}
       </div>
+
+      {other && (
+        <Section>
+          <Cell icon={<Pencil size={20} />} iconBg="ink" title={alias ? 'Edit contact name' : 'Save contact name'} chevron onClick={editName} />
+        </Section>
+      )}
 
       {other && (
         <Section footer="Compare safety numbers in person or on a call to make sure no one is listening in.">
@@ -186,7 +211,13 @@ export function GroupInfo({ convId }: { convId: string }) {
   );
 }
 
-function RenameSheet({ initial, close, onSave }: { initial: string; close: () => Promise<void>; onSave: (t: string) => Promise<void> }) {
+function RenameSheet({ initial, close, onSave, heading = 'Group name', allowSame = false }: {
+  initial: string;
+  close: () => Promise<void>;
+  onSave: (t: string) => Promise<void>;
+  heading?: string;
+  allowSame?: boolean;
+}) {
   const [title, setTitle] = useState(initial);
   const [busy, run] = useAsync();
   const save = () => run(async () => {
@@ -197,11 +228,11 @@ function RenameSheet({ initial, close, onSave }: { initial: string; close: () =>
     <div class="sheet-page compact">
       <div class="sheet-header sheet-drag">
         <button class="nav-button" onClick={() => close()}>Cancel</button>
-        <strong>Group name</strong>
-        <button class="nav-button bold" disabled={!title.trim() || busy || title.trim() === initial} onClick={save}>Save</button>
+        <strong>{heading}</strong>
+        <button class="nav-button bold" disabled={!title.trim() || busy || (!allowSame && title.trim() === initial)} onClick={save}>Save</button>
       </div>
       <div class="sheet-content">
-        <input class="field" type="text" maxLength={60} autoFocus value={title} aria-label="Group name"
+        <input class="field" type="text" maxLength={60} autoFocus value={title} aria-label={heading}
           onInput={(e) => setTitle((e.target as HTMLInputElement).value)}
           onKeyDown={(e) => e.key === 'Enter' && title.trim() && save()} />
       </div>

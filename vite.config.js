@@ -1,13 +1,16 @@
 import { defineConfig } from 'vite';
 import preact from '@preact/preset-vite';
-import { readFileSync, writeFileSync } from 'node:fs';
+import * as esbuild from 'esbuild';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 
-// Writes the service worker with the exact list of build files to precache,
-// and a version derived from their content, so each deploy updates cleanly.
+// Bundles the service worker (client/src/sw.ts) as one self-contained script,
+// with the exact list of build files to precache and a version derived from
+// their content, so each deploy updates cleanly.
 function serviceWorker() {
   let outDir;
+  let shell = [];
+  let version = '';
   return {
     name: 'haven-service-worker',
     apply: 'build',
@@ -15,14 +18,19 @@ function serviceWorker() {
       outDir = config.build.outDir;
     },
     generateBundle(_options, bundle) {
-      const files = Object.keys(bundle).filter((f) => !f.endsWith('.map'));
-      const shell = ['/', '/manifest.webmanifest', '/icons/icon-192.png', ...files.map((f) => `/${f}`)];
-      const version = createHash('sha256').update(files.sort().join('|')).digest('hex').slice(0, 12);
-      const template = readFileSync(resolve('client/sw.template.js'), 'utf8');
-      this.emitFile({
-        type: 'asset',
-        fileName: 'sw.js',
-        source: template.replace('__VERSION__', version).replace('__SHELL__', JSON.stringify(shell)),
+      const files = Object.keys(bundle).filter((f) => !f.endsWith('.map') && f !== 'index.html');
+      shell = ['/', '/manifest.webmanifest', '/icons/icon-192.png', ...files.map((f) => `/${f}`)];
+      version = createHash('sha256').update(files.sort().join('|')).digest('hex').slice(0, 12);
+    },
+    async writeBundle() {
+      await esbuild.build({
+        entryPoints: [resolve('client/src/sw.ts')],
+        bundle: true,
+        format: 'iife',
+        target: ['es2022', 'safari16'],
+        minify: true,
+        outfile: resolve(outDir, 'sw.js'),
+        define: { __VERSION__: JSON.stringify(version), __SHELL__: JSON.stringify(shell) },
       });
     },
   };

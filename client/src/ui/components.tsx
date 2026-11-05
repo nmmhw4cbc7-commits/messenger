@@ -266,11 +266,52 @@ export function actionSheet(actions: Action[], options: { title?: string; messag
   );
 }
 
+/** Native-style alert: a small centered card with side-by-side buttons. */
+export function alertDialog(opts: {
+  title: string;
+  message?: string;
+  buttons: { label: string; style?: 'cancel' | 'danger' | 'default'; run?: () => void | Promise<void> }[];
+  onDismiss?: () => void;
+}) {
+  let picked = false;
+  getNav().present(
+    (close) => (
+      <div class="alert">
+        <div class="alert-body">
+          <strong>{opts.title}</strong>
+          {opts.message && <p>{opts.message}</p>}
+        </div>
+        <div class={`alert-buttons${opts.buttons.length > 2 ? ' stacked' : ''}`}>
+          {opts.buttons.map((b) => (
+            <button
+              key={b.label}
+              class={b.style ?? 'default'}
+              onClick={async () => {
+                picked = true;
+                await close();
+                await b.run?.();
+              }}
+            >
+              {b.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    ),
+    { variant: 'alert', onClose: () => { if (!picked) opts.onDismiss?.(); } },
+  );
+}
+
+/** Yes/no question as a native-style alert. Resolves true when confirmed. */
 export function confirmAction(opts: { title?: string; message: string; confirm: string; danger?: boolean }): Promise<boolean> {
   return new Promise((resolve) => {
-    actionSheet([{ label: opts.confirm, danger: opts.danger, run: () => resolve(true) }], {
-      title: opts.title,
+    alertDialog({
+      title: opts.title ?? opts.confirm,
       message: opts.message,
+      buttons: [
+        { label: 'Cancel', style: 'cancel', run: () => resolve(false) },
+        { label: opts.confirm, style: opts.danger ? 'danger' : 'default', run: () => resolve(true) },
+      ],
       onDismiss: () => resolve(false),
     });
   });

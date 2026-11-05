@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState } from 'preact/hooks';
-import { useStore, type Conv, type Msg } from '../lib/store';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { getState, useStore, type Conv, type Msg } from '../lib/store';
 import { avatarUrl, convTitle, displayName, otherMember, deleteChat, markRead } from '../lib/engine';
 import { formatListTime } from '../lib/format';
 import { Avatar, Empty, NavButton, Screen, actionSheet, confirmAction } from '../ui/components';
@@ -11,7 +11,27 @@ import { SettingsTab } from './Settings';
 import { describeSystem } from './system';
 
 export function Home() {
+  const nav = useNav();
   const [tab, setTab] = useState<'chats' | 'settings'>('chats');
+
+  // Tapping a notification opens that chat.
+  useEffect(() => {
+    const open = (convId: string) => {
+      if (!getState().convs[convId]) return;
+      setTab('chats');
+      nav.push(<ChatScreen convId={convId} />);
+    };
+    const fromUrl = new URLSearchParams(location.search).get('chat');
+    if (fromUrl) {
+      history.replaceState(history.state, '', '/');
+      open(fromUrl);
+    }
+    const onMessage = (e: MessageEvent) => {
+      if (e.data?.type === 'open-chat' && typeof e.data.convId === 'string') open(e.data.convId);
+    };
+    navigator.serviceWorker?.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker?.removeEventListener('message', onMessage);
+  }, []);
   const unread = useStore((s) => Object.values(s.convs).reduce((n, c) => n + (c.hidden ? 0 : c.unread), 0));
 
   return (
@@ -39,6 +59,7 @@ function ChatsTab() {
   const nav = useNav();
   const convs = useStore((s) => s.convs);
   const me = useStore((s) => s.me);
+  useStore((s) => s.aliases); // re-render when contact names change
   const connected = useStore((s) => s.connected);
   const [query, setQuery] = useState('');
 
@@ -48,13 +69,13 @@ function ChatsTab() {
     const matches = (c: Conv) =>
       !q || convTitle(c, me?.id).toLowerCase().includes(q) || (digits.length >= 3 && c.members.some((m) => m.id !== me?.id && m.phone.includes(digits)));
     return Object.values(convs)
-      .filter((c) => !c.hidden && (c.last || c.kind === 'group' || c.createdBy === me?.id))
+      .filter((c) => !c.hidden && (c.last || c.kind === 'group' || c.createdBy === me?.id || c.updatedAt > c.createdAt))
       .filter(matches)
       .sort((a, b) => (b.last?.sortKey ?? b.createdAt) - (a.last?.sortKey ?? a.createdAt));
   }, [convs, query, me?.id]);
 
   const openNew = () => nav.present((close) => <NewChatSheet close={close} />, { variant: 'full' });
-  const hasAny = Object.values(convs).some((c) => !c.hidden && (c.last || c.kind === 'group' || c.createdBy === me?.id));
+  const hasAny = Object.values(convs).some((c) => !c.hidden && (c.last || c.kind === 'group' || c.createdBy === me?.id || c.updatedAt > c.createdAt));
 
   return (
     <Screen

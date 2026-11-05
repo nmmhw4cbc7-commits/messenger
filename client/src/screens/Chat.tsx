@@ -29,6 +29,7 @@ export function ChatScreen({ convId }: { convId: string }) {
   const messages = useStore((s) => s.messages[convId]);
   const me = useStore((s) => s.me);
   const pins = useStore((s) => s.pins);
+  useStore((s) => s.aliases); // re-render when contact names change
   const [replyTo, setReplyTo] = useState<ReplyRef | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
 
@@ -242,7 +243,6 @@ function Bubble({ msg, conv, meId, first, last, onReply, onMenu, nameOf }: {
   const rowRef = useRef<HTMLDivElement>(null);
   const bubbleRef = useRef<HTMLDivElement>(null);
   const reactions = Object.entries(msg.reactions ?? {});
-  const showFoot = last || msg.status === 'pending' || msg.status === 'failed';
 
   // One pointer handler for long press (menu) and horizontal swipe (reply).
   const onPointerDown = (e: PointerEvent) => {
@@ -311,7 +311,11 @@ function Bubble({ msg, conv, meId, first, last, onReply, onMenu, nameOf }: {
     const el = bubbleRef.current;
     if (!el) return;
     haptic(12);
-    onMenu({ msg, rect: el.getBoundingClientRect(), mine });
+    // Measure relative to the screen the menu is drawn in (it follows the visual viewport).
+    const r = el.getBoundingClientRect();
+    const host = el.closest('.stack-item')?.getBoundingClientRect();
+    const rect = new DOMRect(r.left - (host?.left ?? 0), r.top - (host?.top ?? 0), r.width, r.height);
+    onMenu({ msg, rect, mine });
   };
 
   const cls = ['bubble-row', mine ? 'out' : 'in', first ? 'first' : '', last ? 'last' : '', showAvatar ? 'with-avatar' : '', reactions.length ? 'has-reactions' : ''].filter(Boolean).join(' ');
@@ -341,6 +345,11 @@ function Bubble({ msg, conv, meId, first, last, onReply, onMenu, nameOf }: {
             ) : (
               <span class="bubble-text">{linkify(msg.text ?? '')}</span>
             )}
+            {/* Floated after the text: sits on the last line when there is room, otherwise on its own line. Never overlaps. */}
+            <span class="bubble-meta">
+              {formatTime(msg.createdAt)}
+              {mine && <Ticks msg={msg} conv={conv} meId={meId} />}
+            </span>
           </div>
           {reactions.length > 0 && (
             <button class="reactions" onClick={openMenu} aria-label="Reactions">
@@ -350,12 +359,6 @@ function Bubble({ msg, conv, meId, first, last, onReply, onMenu, nameOf }: {
           )}
         </div>
       </div>
-      {showFoot && (
-        <div class={`bubble-foot ${mine ? 'out' : 'in'}${showAvatar ? ' with-avatar' : ''}`}>
-          <span>{formatTime(msg.createdAt)}</span>
-          {mine && <Ticks msg={msg} conv={conv} meId={meId} />}
-        </div>
-      )}
     </div>
   );
 }
@@ -382,7 +385,7 @@ function ContextMenu({ state, meId, canReply, onClose, onReply }: {
   };
 
   // Keep the bubble where it was, but make room for the reaction bar and actions.
-  const vh = window.innerHeight;
+  const vh = document.getElementById('app')?.clientHeight ?? window.innerHeight;
   const hasBar = msg.kind === 'text' && msg.status !== 'pending' && msg.status !== 'failed';
   const barHeight = hasBar ? 58 : 0;
   const actionCount = (msg.kind === 'text' && canReply ? 1 : 0) + (msg.kind === 'text' ? 1 : 0) + (msg.status === 'failed' ? 1 : 0) + 1;
