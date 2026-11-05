@@ -383,9 +383,15 @@ function ContextMenu({ state, meId, canReply, onClose, onReply }: {
 
   // Keep the bubble where it was, but make room for the reaction bar and actions.
   const vh = window.innerHeight;
-  const actionsHeight = 52 * (2 + (msg.kind === 'text' && canReply ? 1 : 0) + (msg.status === 'failed' ? 1 : 0)) + 16;
-  const bubbleH = Math.min(rect.height, vh * 0.4);
-  const top = Math.max(110, Math.min(rect.top, vh - bubbleH - actionsHeight - 24));
+  const hasBar = msg.kind === 'text' && msg.status !== 'pending' && msg.status !== 'failed';
+  const barHeight = hasBar ? 58 : 0;
+  const actionCount = (msg.kind === 'text' && canReply ? 1 : 0) + (msg.kind === 'text' ? 1 : 0) + (msg.status === 'failed' ? 1 : 0) + 1;
+  const actionsHeight = 34 + 48 * actionCount + 8;
+  const bubbleH = Math.min(rect.height, vh * 0.3);
+  const safeTop = 56;
+  const safeBottom = 40; // includes the gaps between bar, bubble and actions
+  // The bubble stays where it was when possible; the whole stack is shifted to fit on screen.
+  const top = Math.max(safeTop, Math.min(rect.top - barHeight, vh - safeBottom - barHeight - bubbleH - actionsHeight));
   const side = mine ? { right: `${Math.max(10, window.innerWidth - rect.right)}px` } : { left: `${Math.max(10, rect.left)}px` };
 
   const actions: { label: string; icon: JSX.Element; danger?: boolean; run: () => void }[] = [];
