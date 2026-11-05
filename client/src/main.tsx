@@ -21,6 +21,25 @@ function trackViewport() {
   vv?.addEventListener('resize', update);
   vv?.addEventListener('scroll', update);
   window.addEventListener('resize', update);
+
+  // iOS pans the whole page up while the keyboard slides in, which pushes the
+  // header off-screen. Undo that pan on every frame of the animation, so only
+  // the message list shrinks and the header stays where it is.
+  let until = 0;
+  const hold = () => {
+    if (vv && vv.offsetTop > 0) window.scrollTo(0, 0);
+    update();
+    if (performance.now() < until) requestAnimationFrame(hold);
+  };
+  const start = () => {
+    const running = performance.now() < until;
+    until = performance.now() + 900;
+    if (!running) requestAnimationFrame(hold);
+  };
+  document.addEventListener('focusin', (e) => {
+    if ((e.target as HTMLElement).matches('input, textarea')) start();
+  });
+  document.addEventListener('focusout', start);
 }
 
 trackViewport();

@@ -23,6 +23,8 @@ export async function boot() {
   const aliases = (await idb.get<Record<string, string>>('meta', 'aliases').catch(() => undefined)) ?? {};
   const pushPreview = (await idb.get<boolean>('meta', 'pushPreview').catch(() => undefined)) ?? true;
   setState({ aliases, pushPreview });
+  // Opening the app (also from a notification) clears what is already on the lock screen.
+  clearNotifications();
   if (!identity || !me) {
     setState({ phase: 'signedOut', lastPhone: identity?.phone ?? '' });
     return;
@@ -488,7 +490,18 @@ export async function markRead(convId: string) {
 
 export function setOpenConv(convId: string | null) {
   setState({ openConvId: convId });
-  if (convId) markRead(convId);
+  if (convId) {
+    markRead(convId);
+    clearNotifications(convId);
+  }
+}
+
+/** Remove delivered notifications from the lock screen: for one chat, or all of them. */
+export function clearNotifications(convId?: string) {
+  navigator.serviceWorker?.getRegistration()
+    .then((reg) => reg?.getNotifications())
+    .then((list) => list?.forEach((n) => { if (!convId || n.tag === convId || n.tag === 'haven-new-message') n.close(); }))
+    .catch(() => {});
 }
 
 function updateBadge() {
@@ -970,7 +983,7 @@ document.addEventListener('visibilitychange', () => {
   sync();
   const open = getState().openConvId;
   if (open) markRead(open);
-  navigator.serviceWorker?.getRegistration().then((reg) => reg?.getNotifications().then((ns) => ns.forEach((n) => n.close()))).catch(() => {});
+  clearNotifications();
 });
 window.addEventListener('online', () => {
   if (!wanted) return;
