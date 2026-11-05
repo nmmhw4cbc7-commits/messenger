@@ -80,7 +80,7 @@ interface SyncMessage {
   body: unknown;
 }
 
-async function preview(): Promise<{ title: string; body: string; tag: string; convId?: string } | null> {
+async function preview(): Promise<{ title: string; body: string; tag: string; convId?: string; open?: string } | null> {
   const [identity, me, cursor, aliases] = await Promise.all([
     idbGet<Identity>('meta', 'identity'),
     idbGet<Me>('meta', 'me'),
@@ -106,8 +106,11 @@ async function preview(): Promise<{ title: string; body: string; tag: string; co
     if (p.type === 'text') body = p.text;
     else if (p.type === 'reaction') {
       if (!p.emoji) continue;
+      const target = await idbGet<{ media?: { vlog?: string } }>('messages', p.target).catch(() => undefined);
+      if (target?.media?.vlog) return { title: sender, body: `Reacted ${p.emoji} to your vlog`, tag: 'haven-vlog', open: 'today' };
       body = `Reacted ${p.emoji}`;
     } else if (p.type === 'media') {
+      if (p.media.vlog) continue; // announced separately as "X just vlogged"
       body = p.media.viewOnce ? 'Photo · view once' : p.media.kind === 'voice' ? 'Voice message' : p.media.kind === 'video' ? 'Video' : 'Photo';
       if (p.media.caption && !p.media.viewOnce) body += ` · ${p.media.caption}`;
     } else if (p.type === 'location') body = 'Location';
@@ -124,6 +127,8 @@ self.addEventListener('push', (event) => {
     let data: { t?: string; title?: string; body?: string; open?: string } = {};
     try { data = event.data?.json() ?? {}; } catch { /* content-free push */ }
     if (data.t === 'announce' && data.title) {
+      // Vlog news while the app is open: it is on screen already.
+      if (data.open === 'today' && (await self.clients.matchAll({ type: 'window', includeUncontrolled: true })).some((w) => w.visibilityState === 'visible')) return;
       await self.registration.showNotification(data.title, {
         body: data.body ?? '',
         tag: 'haven-announce',
@@ -149,7 +154,7 @@ self.addEventListener('push', (event) => {
       tag: note?.tag ?? 'haven-new-message',
       icon: '/icons/icon-192.png',
       badge: '/icons/badge-96.png',
-      data: { convId: note?.convId },
+      data: { convId: note?.convId, open: note?.open },
       // @ts-expect-error renotify is supported by browsers but missing from older typings
       renotify: true,
     });

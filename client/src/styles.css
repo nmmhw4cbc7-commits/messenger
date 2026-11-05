@@ -2404,3 +2404,10 @@ button.plain-row:active { background: var(--press); transition: none; }
 .vlog-progress p { margin: 0; font-size: 13.5px; color: var(--text-2); }
 .vlog-progress-bar { height: 6px; border-radius: 3px; background: var(--accent-soft); overflow: hidden; }
 .vlog-progress-bar span { display: block; height: 100%; background: var(--signal); transition: width 0.3s linear; }
+.vlog-reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.vlog-reaction { display: inline-flex; align-items: center; gap: 4px; height: 34px; padding: 0 11px; border: 0; border-radius: 17px; background: var(--bg-elevated); box-shadow: 0 0 0 0.5px var(--sep); font: inherit; font-size: 17px; color: var(--text); }
+.vlog-reaction em { font-style: normal; font-family: var(--mono); font-size: 12px; color: var(--text-2); }
+button.vlog-reaction:active { transform: scale(0.94); }
+.vlog-reaction.on { background: var(--ink); box-shadow: none; }
+.vlog-reaction.on em { color: var(--on-ink); }
+.vlog-reaction-names { font-size: 13px; color: var(--text-2); }

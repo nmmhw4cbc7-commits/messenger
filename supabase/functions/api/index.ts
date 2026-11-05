@@ -1267,9 +1267,18 @@ route('POST', '/circle', async ({ req, reply, body }) => {
 
 route('POST', '/conversations/:id/messages', async ({ req, reply, params, body }) => {
   const user = await currentUser(req, reply);
-  const b = shape<{ id: string; envelope: Row }>(body, { id: [isId, true], envelope: [validEnvelope, true] });
+  const b = shape<{ id: string; envelope: Row; vlog?: boolean; pushTo?: string[] }>(body, {
+    id: [isId, true], envelope: [validEnvelope, true], vlog: [(v) => v === true, false], pushTo: [(v) => Array.isArray(v) && v.length <= 5 && v.every(isId), false],
+  });
   await enforce(`send:${user.id}`, 120, MIN);
   const conv = await membershipOrThrow(params.id, user.id);
+  // Vlog posts: only in a friend group, and only by today's pick.
+  if (b.vlog) {
+    if (!conv.circle) throw new HttpError(400, 'not_circle');
+    const { day } = await berlinNow();
+    const [pick] = await sql`select user_id from haven.circle_days where conversation_id = ${conv.id} and day = ${day}`;
+    if (pick?.user_id !== user.id) throw new HttpError(403, 'not_your_turn', 'It’s not your turn to vlog today.');
+  }
 
   const [existing] = await sql`select conversation_id, sender_id, created_at from haven.messages where id = ${b.id}`;
   if (existing) {
@@ -1298,7 +1307,15 @@ route('POST', '/conversations/:id/messages', async ({ req, reply, params, body }
       await queueFor(tx, m.seq, recipientUsers, user.device_id);
       await tx`update haven.conversations set updated_at = ${t} where id = ${conv.id}`;
     });
-    await notifyMessages(recipientUsers.filter((uid) => uid !== user.id));
+    const others = recipientUsers.filter((uid) => uid !== user.id);
+    await broadcast(others, 'sync');
+    if (b.vlog) {
+      // "X just vlogged", at most once every 10 minutes per group.
+      const [{ hit }] = await sql`select haven.hit(${`vlogpush:${conv.id}`}, 1, ${10 * MIN}) as hit`;
+      if (!(hit > 0)) await notifyUsers(others, `${user.name || 'A friend'} just vlogged 🎬`, 'See their day in Vlog your Day.', 'today');
+    } else {
+      await sendPush(b.pushTo ? b.pushTo.filter((id) => others.includes(id)) : others);
+    }
     await broadcast([user.id], 'sync');
   }
   return { id: b.id, createdAt: t };

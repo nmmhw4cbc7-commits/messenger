@@ -27,7 +27,9 @@ interface MenuState {
 export function ChatScreen({ convId }: { convId: string }) {
   const nav = useNav();
   const conv = useStore((s) => s.convs[convId]);
-  const messages = useStore((s) => s.messages[convId]);
+  const allMessages = useStore((s) => s.messages[convId]);
+  // Vlog posts are shown on the Today screen, not in the chat.
+  const messages = useMemo(() => allMessages?.filter((m) => !m.media?.vlog), [allMessages]);
   const me = useStore((s) => s.me);
   const pins = useStore((s) => s.pins);
   useStore((s) => s.aliases); // re-render when contact names change

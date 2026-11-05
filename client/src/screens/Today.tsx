@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { getState, useStore, type Conv, type Member, type Msg } from '../lib/store';
 import {
-  addMembers, avatarUrl, createCircle, displayName, formatDuration, loadMessages, refreshCircle, sendMedia,
+  addMembers, avatarUrl, createCircle, displayName, formatDuration, loadMessages, react, refreshCircle, sendMedia,
   vlogPosts, vlogUsage, VLOG_LIMITS,
 } from '../lib/engine';
 import { compressVideo, MAX_FILE, preparePhoto, prepareVideo } from '../lib/media';
@@ -104,7 +104,7 @@ export function TodayTab() {
           <div class="vlog-card-person">
             <Avatar id={picked?.id ?? pick.userId} name={displayName(picked)} src={picked ? avatarUrl(picked) : null} size={56} />
             <div>
-              <p class="vlog-card-label"><span class="live-dot" />Today’s vlogger</p>
+              <p class="vlog-card-label"><span class="live-dot" />Today it’s</p>
               <h2 class="vlog-card-title">{displayName(picked) || 'A friend'}</h2>
             </div>
           </div>
@@ -199,7 +199,7 @@ function MyTurn({ conv, today, posts }: { conv: Conv; today: string; posts: Msg[
 
   return (
     <div class="vlog-card mine">
-      <p class="vlog-card-label"><span class="live-dot" />It’s your turn</p>
+      <p class="vlog-card-label"><span class="live-dot" />Today it’s you</p>
       <h2 class="vlog-card-title">{done ? 'Your day is vlogged' : 'Vlog your day'}</h2>
       <p class="vlog-card-text">
         {done ? 'Thanks for sharing. Your friends can follow your day now.'
@@ -307,6 +307,41 @@ function Timeline({ posts }: { posts: Msg[] }) {
   );
 }
 
+const QUICK = ['❤️', '🔥', '😂', '😮', '👏'];
+
+/** React right on the post; the person who posted it gets a notification. */
+function Reactions({ msg }: { msg: Msg }) {
+  const meId = useStore((s) => s.me?.id);
+  const conv = useStore((s) => s.convs[msg.convId]);
+  const mine = msg.senderId === meId;
+  const entries = Object.entries(msg.reactions ?? {});
+  const counts = new Map<string, number>();
+  for (const [, e] of entries) counts.set(e, (counts.get(e) ?? 0) + 1);
+  const myEmoji = meId ? msg.reactions?.[meId] : undefined;
+  const names = (emoji: string) => entries.filter(([, e]) => e === emoji)
+    .map(([id]) => (id === meId ? 'You' : firstName(conv?.members.find((m) => m.id === id)))).join(', ');
+  const tap = (emoji: string) => react(msg, emoji).catch((err) => toast(errorMessage(err), 'error'));
+  if (mine) {
+    if (!entries.length) return null;
+    return (
+      <div class="vlog-reactions">
+        {[...counts].map(([emoji, n]) => <span key={emoji} class="vlog-reaction" title={names(emoji)}>{emoji}<em>{n}</em></span>)}
+        <span class="vlog-reaction-names">{entries.map(([id]) => firstName(conv?.members.find((m) => m.id === id))).join(', ')}</span>
+      </div>
+    );
+  }
+  return (
+    <div class="vlog-reactions">
+      {QUICK.map((emoji) => (
+        <button key={emoji} class={`vlog-reaction${myEmoji === emoji ? ' on' : ''}`} onClick={() => tap(emoji)}
+          aria-pressed={myEmoji === emoji} aria-label={`React ${emoji}`} title={counts.get(emoji) ? names(emoji) : undefined}>
+          {emoji}{counts.get(emoji) ? <em>{counts.get(emoji)}</em> : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function TimelineItem({ msg }: { msg: Msg }) {
   const media = msg.media!;
   const { url, error } = useMediaUrl(msg);
@@ -327,6 +362,7 @@ function TimelineItem({ msg }: { msg: Msg }) {
         {error && <span class="visual-error">{error}</span>}
       </button>
       {media.caption && <p class="vlog-item-caption">{media.caption}</p>}
+      {msg.status !== 'pending' && msg.status !== 'failed' && <Reactions msg={msg} />}
     </li>
   );
 }

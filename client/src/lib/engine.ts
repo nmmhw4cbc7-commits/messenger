@@ -431,7 +431,7 @@ export async function deleteMessage(msg: Msg) {
 
 // ------------------------------------------------------------------ messages
 
-const lastVisible = (list: Msg[]) => [...list].reverse().find((m) => m.kind !== 'notice') ?? null;
+const lastVisible = (list: Msg[]) => [...list].reverse().find((m) => m.kind !== 'notice' && !m.media?.vlog) ?? null;
 
 export async function loadMessages(convId: string) {
   if (getState().messages[convId]) return;
@@ -459,8 +459,10 @@ async function addMessages(msgs: Msg[], countUnread: boolean) {
     const conv = convs[m.convId];
     if (!conv) continue;
     const isOpen = s.openConvId === m.convId && visible;
-    const unreadBump = countUnread && m.senderId !== meId && m.kind !== 'notice' && !isOpen ? 1 : 0;
-    const newer = m.kind !== 'notice' && (!conv.last || m.sortKey >= conv.last.sortKey);
+    // Vlog posts live on the Today screen, not in the chat.
+    const inChat = m.kind !== 'notice' && !m.media?.vlog;
+    const unreadBump = countUnread && m.senderId !== meId && inChat && !isOpen ? 1 : 0;
+    const newer = inChat && (!conv.last || m.sortKey >= conv.last.sortKey);
     convs[m.convId] = {
       ...conv,
       hidden: false,
@@ -691,7 +693,8 @@ async function deliver(msg: Msg): Promise<'sent' | 'failed' | 'offline' | 'pause
       const payload = payloadOf(msg);
       const envelope = await encryptMessage(identity, me.id, conv.id, msg.id, payload,
         recipientsOf(conv));
-      const res = await api<{ id: string; createdAt: number }>('POST', `/api/conversations/${conv.id}/messages`, { id: msg.id, envelope });
+      // Vlog posts are announced as "X just vlogged" instead of a message notification.
+      const res = await api<{ id: string; createdAt: number }>('POST', `/api/conversations/${conv.id}/messages`, { id: msg.id, envelope, ...(msg.media?.vlog ? { vlog: true } : {}) });
       await updateMessage({ ...msg, status: 'sent', createdAt: res.createdAt });
       return 'sent';
     } catch (err) {
@@ -715,7 +718,7 @@ async function deliver(msg: Msg): Promise<'sent' | 'failed' | 'offline' | 'pause
 // ------------------------------------------------------------------ reactions
 
 /** Encrypt and send a control payload (reactions) right away. */
-async function sendPayload(convId: string, payload: Payload) {
+async function sendPayload(convId: string, payload: Payload, extra: Record<string, unknown> = {}) {
   const me = getState().me;
   if (!me || !identity) throw new Error('You are offline.');
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -726,7 +729,7 @@ async function sendPayload(convId: string, payload: Payload) {
     void others;
     const envelope = await encryptMessage(identity, me.id, conv.id, id, payload, recipientsOf(conv));
     try {
-      await api('POST', `/api/conversations/${conv.id}/messages`, { id, envelope });
+      await api('POST', `/api/conversations/${conv.id}/messages`, { id, envelope, ...extra });
       return;
     } catch (err) {
       if (err instanceof ApiError && (err.code === 'members_changed' || err.code === 'keys_changed' || err.code === 'devices_changed')) {
@@ -753,7 +756,9 @@ export async function react(msg: Msg, emoji: string) {
   if (!me) return;
   const next = msg.reactions?.[me.id] === emoji ? '' : emoji;
   await applyReaction(msg.id, me.id, next);
-  await sendPayload(msg.convId, { type: 'reaction', target: msg.id, emoji: next });
+  // Reactions to a vlog only notify the person who posted it.
+  const extra = msg.media?.vlog ? { pushTo: next && msg.senderId && msg.senderId !== me.id ? [msg.senderId] : [] } : {};
+  await sendPayload(msg.convId, { type: 'reaction', target: msg.id, emoji: next }, extra);
 }
 
 // ------------------------------------------------------------------ read receipts
