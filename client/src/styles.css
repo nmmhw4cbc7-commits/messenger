@@ -2219,3 +2219,7 @@ button.plain-row:active { background: var(--press); transition: none; }
 
 .check-row { display: flex; align-items: center; gap: 10px; padding: 6px 2px; font-size: 16px; }
 .check-row input { width: 20px; height: 20px; accent-color: var(--signal); }
+
+/* Fixes: viewer note never under the close button; contact avatar visible in own bubbles */
+.viewer-note { right: 64px; line-height: 1.4; }
+.out .contact-card .avatar-fallback { background: var(--on-ink) !important; color: var(--ink); }
