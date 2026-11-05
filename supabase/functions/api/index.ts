@@ -338,6 +338,31 @@ async function sendPush(userIds: string[]) {
   }
 }
 
+/**
+ * One-off announcement to every subscribed device. It is queued by inserting
+ * {title, body, open} as 'announce' into haven.kv; the next request sends it
+ * exactly once (the row is claimed by deleting it).
+ */
+async function sendPendingAnnouncement() {
+  const [row] = await sql`delete from haven.kv where key = 'announce' returning value`;
+  if (!row) return;
+  let a: { title?: unknown; body?: unknown; open?: unknown };
+  try { a = JSON.parse(row.value); } catch { return; }
+  if (typeof a.title !== 'string' || typeof a.body !== 'string') return;
+  const payload = JSON.stringify({ t: 'announce', title: a.title.slice(0, 80), body: a.body.slice(0, 200), open: typeof a.open === 'string' ? a.open.slice(0, 40) : undefined });
+  const subs = await sql`select endpoint, p256dh, auth from haven.push_subscriptions`;
+  const keys = await vapidKeys();
+  const origin = (await allowedOrigins())[0] || 'https://haven.app';
+  webpush.setVapidDetails(`mailto:push@${new URL(origin).hostname}`, keys.publicKey, keys.privateKey);
+  const results = await Promise.all(subs.map((s) =>
+    webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload, { TTL: 7 * 86400, urgency: 'normal', timeout: 8000 })
+      .then(() => true, async (err: { statusCode?: number }) => {
+        if (err.statusCode === 404 || err.statusCode === 410) await sql`delete from haven.push_subscriptions where endpoint = ${s.endpoint}`;
+        return false;
+      })));
+  console.log(`announcement sent to ${results.filter(Boolean).length}/${subs.length} devices`);
+}
+
 // ------------------------------------------------------------------ Telegram verification
 
 // The bot token comes from the TELEGRAM_BOT_TOKEN secret, or else from the private kv table.
@@ -1300,6 +1325,10 @@ Deno.serve(async (req) => {
   const path = url.pathname.replace(/^\/(functions\/v1\/)?api/, '') || '/';
   const reply = new Reply();
   try {
+    if (path === '/announce' && req.method === 'POST') {
+      await sendPendingAnnouncement();
+      return new Response(null, { status: 204 });
+    }
     if (path === '/telegram/webhook' && req.method === 'POST') return await telegramWebhook(req);
 
     const match = routes.find((r) => r.method === req.method && r.pattern.test(path));

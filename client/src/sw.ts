@@ -121,6 +121,18 @@ async function preview(): Promise<{ title: string; body: string; tag: string; co
 
 self.addEventListener('push', (event) => {
   event.waitUntil((async () => {
+    let data: { t?: string; title?: string; body?: string; open?: string } = {};
+    try { data = event.data?.json() ?? {}; } catch { /* content-free push */ }
+    if (data.t === 'announce' && data.title) {
+      await self.registration.showNotification(data.title, {
+        body: data.body ?? '',
+        tag: 'haven-announce',
+        icon: '/icons/icon-192.png',
+        badge: '/icons/badge-96.png',
+        data: { open: data.open },
+      });
+      return;
+    }
     const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     if (windows.some((w) => w.visibilityState === 'visible')) return;
     let note: Awaited<ReturnType<typeof preview>> = null;
@@ -146,16 +158,19 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const convId = (event.notification.data as { convId?: string } | null)?.convId;
+  const data = (event.notification.data ?? {}) as { convId?: string; open?: string };
+  const convId = data.convId;
+  const open = data.open && /^[a-z-]+$/.test(data.open) ? data.open : undefined;
   event.waitUntil((async () => {
     const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const w of windows) {
       if ('focus' in w) {
         await w.focus();
         if (convId) w.postMessage({ type: 'open-chat', convId });
+        if (open) w.postMessage({ type: 'open-screen', screen: open });
         return;
       }
     }
-    await self.clients.openWindow(convId ? `/?chat=${encodeURIComponent(convId)}` : '/');
+    await self.clients.openWindow(convId ? `/?chat=${encodeURIComponent(convId)}` : open ? `/?open=${open}` : '/');
   })());
 });

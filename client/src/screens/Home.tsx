@@ -9,6 +9,7 @@ import { ChatScreen } from './Chat';
 import { NewChatSheet } from './NewChat';
 import { SettingsTab } from './Settings';
 import { describeSystem } from './system';
+import { DevicesScreen } from './Devices';
 
 export function Home() {
   const nav = useNav();
@@ -21,13 +22,20 @@ export function Home() {
       setTab('chats');
       nav.push(<ChatScreen convId={convId} />);
     };
-    const fromUrl = new URLSearchParams(location.search).get('chat');
-    if (fromUrl) {
-      history.replaceState(history.state, '', '/');
-      open(fromUrl);
-    }
+    const openScreen = (screen: string) => {
+      if (screen !== 'devices') return;
+      setTab('settings');
+      nav.push(<DevicesScreen />);
+    };
+    const params = new URLSearchParams(location.search);
+    const fromUrl = params.get('chat');
+    const screenFromUrl = params.get('open');
+    if (fromUrl || screenFromUrl) history.replaceState(history.state, '', '/');
+    if (fromUrl) open(fromUrl);
+    else if (screenFromUrl) openScreen(screenFromUrl);
     const onMessage = (e: MessageEvent) => {
       if (e.data?.type === 'open-chat' && typeof e.data.convId === 'string') open(e.data.convId);
+      if (e.data?.type === 'open-screen' && typeof e.data.screen === 'string') openScreen(e.data.screen);
     };
     navigator.serviceWorker?.addEventListener('message', onMessage);
     return () => navigator.serviceWorker?.removeEventListener('message', onMessage);
