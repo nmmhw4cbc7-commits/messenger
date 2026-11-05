@@ -2250,3 +2250,90 @@ button.plain-row:active { background: var(--press); transition: none; }
   font-size: 14px;
 }
 .feature-hero.transfer { padding-top: 60px; }
+
+/* Profile photo editor: move and scale inside the circle */
+.sheet-layer.editor .sheet {
+  top: 0;
+  max-height: none;
+  box-shadow: none;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: #0b0b0a;
+  color: #f2f0eb;
+}
+.avatar-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: calc(var(--safe-top) + 14px) 0 calc(var(--safe-bottom) + 12px);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.avatar-editor-title {
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(242, 240, 235, 0.7);
+}
+.avatar-editor-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+}
+.avatar-editor-stage:active { cursor: grabbing; }
+.avatar-editor-stage img {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  max-width: none;
+  pointer-events: none;
+  will-change: transform;
+}
+.avatar-editor-mask {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  box-shadow: 0 0 0 200vmax rgba(11, 11, 10, 0.72);
+  outline: 1.5px solid rgba(255, 255, 255, 0.85);
+  pointer-events: none;
+}
+.avatar-editor-zoom {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 28px 6px;
+  font-size: 20px;
+  color: rgba(242, 240, 235, 0.7);
+}
+.avatar-editor-zoom input { flex: 1; accent-color: var(--accent); }
+.avatar-editor-actions {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 20px 0;
+}
+.avatar-editor-btn {
+  min-width: 96px;
+  height: 44px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 22px;
+  background: none;
+  color: #f2f0eb;
+  font: inherit;
+  font-size: 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.avatar-editor-btn.primary { background: var(--accent); color: #141412; font-weight: 600; }
+.avatar-editor-btn:disabled { opacity: 0.6; }

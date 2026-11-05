@@ -4,7 +4,7 @@ import {
   avatarUrl, updateProfile, uploadAvatar, removeAvatar, setTheme, signOut, deleteAccount, setPin, removePin,
   listBlocked, unblock, pushSupported, pushEnabled, enablePush, disablePush, displayName, setPushPreview,
 } from '../lib/engine';
-import { prepareAvatar } from '../lib/image';
+import { editAvatar } from '../ui/AvatarEditor';
 import { prettyPhone, toE164 } from '../lib/phone';
 import { parsePhoneNumberFromString } from 'libphonenumber-js/min';
 import { errorMessage } from '../lib/api';
@@ -101,7 +101,7 @@ function EditProfile() {
         <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => {
           const file = (e.target as HTMLInputElement).files?.[0];
           (e.target as HTMLInputElement).value = '';
-          if (file) runUpload(async () => uploadAvatar(await prepareAvatar(file)));
+          if (file) editAvatar(file).then((blob) => blob && runUpload(() => uploadAvatar(blob)));
         }} />
       </div>
       <Section header="Name" footer="Your name and photo are visible to people who have your number.">

@@ -107,7 +107,7 @@ interface NavApi {
   present(render: (close: () => Promise<void>) => JSX.Element, options?: { variant?: SheetVariant; onClose?: () => void }): void;
 }
 
-export type SheetVariant = 'card' | 'full' | 'action' | 'alert';
+export type SheetVariant = 'card' | 'full' | 'action' | 'alert' | 'editor';
 
 const NavContext = createContext<NavApi>(null as unknown as NavApi);
 export const useNav = () => useContext(NavContext);
@@ -339,8 +339,8 @@ function SheetFrame({ id, variant, children }: { id: number; variant: SheetVaria
   return (
     <div class={`sheet-layer ${variant}`} data-sheet={id}>
       <div class="sheet-backdrop" onClick={() => variant !== 'alert' && goBack()} />
-      <div class="sheet" ref={panel} role={variant === 'alert' ? 'alertdialog' : 'dialog'} aria-modal="true" onPointerDown={variant === 'action' || variant === 'alert' ? undefined : onPointerDown}>
-        {variant !== 'action' && variant !== 'alert' && <div class="sheet-grabber" aria-hidden="true" />}
+      <div class="sheet" ref={panel} role={variant === 'alert' ? 'alertdialog' : 'dialog'} aria-modal="true" onPointerDown={variant === 'action' || variant === 'alert' || variant === 'editor' ? undefined : onPointerDown}>
+        {variant !== 'action' && variant !== 'alert' && variant !== 'editor' && <div class="sheet-grabber" aria-hidden="true" />}
         {children}
       </div>
     </div>

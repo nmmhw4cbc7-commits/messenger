@@ -8,7 +8,7 @@ import { guessCountry, toE164, prettyPhone } from '../lib/phone';
 import { startVerification, checkVerification, submitPin, forgetDevice, updateProfile, uploadAvatar, avatarUrl, type Verification } from '../lib/engine';
 import { errorMessage } from '../lib/api';
 import { useStore } from '../lib/store';
-import { prepareAvatar } from '../lib/image';
+import { editAvatar } from '../ui/AvatarEditor';
 import { parsePhoneNumberFromString } from 'libphonenumber-js/min';
 
 export function Welcome() {
@@ -235,7 +235,7 @@ export function ProfileSetup() {
           onChange={(e) => {
             const file = (e.target as HTMLInputElement).files?.[0];
             (e.target as HTMLInputElement).value = '';
-            if (file) runUpload(async () => uploadAvatar(await prepareAvatar(file)));
+            if (file) editAvatar(file).then((blob) => blob && runUpload(() => uploadAvatar(blob)));
           }}
         />
         <input

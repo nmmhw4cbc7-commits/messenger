@@ -2,15 +2,26 @@
 // Re-encoding through a canvas drops all metadata (EXIF location, camera
 // serial numbers) before anything is uploaded.
 
-export async function prepareAvatar(file: File, size = 512): Promise<Blob> {
+export async function openPicture(file: File): Promise<ImageBitmap> {
   if (!file.type.startsWith('image/')) throw new Error('Please choose a picture.');
   if (file.size > 25 * 1024 * 1024) throw new Error('This picture is too large.');
-  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => {
+  return createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => {
     throw new Error('This picture could not be opened.');
   });
-  const side = Math.min(bitmap.width, bitmap.height);
-  const sx = (bitmap.width - side) / 2;
-  const sy = (bitmap.height - side) / 2;
+}
+
+/** A square region of the picture, in its own pixels. */
+export type Crop = { sx: number; sy: number; side: number };
+
+export async function prepareAvatar(file: File, size = 512): Promise<Blob> {
+  return renderAvatar(await openPicture(file), null, size);
+}
+
+/** Cut the crop out of the picture (centre square by default) and encode it as JPEG. Closes the bitmap. */
+export async function renderAvatar(bitmap: ImageBitmap, crop: Crop | null, size = 512): Promise<Blob> {
+  const side = crop?.side ?? Math.min(bitmap.width, bitmap.height);
+  const sx = crop?.sx ?? (bitmap.width - side) / 2;
+  const sy = crop?.sy ?? (bitmap.height - side) / 2;
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d')!;
