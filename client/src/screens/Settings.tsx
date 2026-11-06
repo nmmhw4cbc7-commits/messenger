@@ -11,13 +11,23 @@ import { parsePhoneNumberFromString } from 'libphonenumber-js/min';
 import { errorMessage } from '../lib/api';
 import { Avatar, Button, Cell, Screen, Section, Segmented, Spinner, Toggle, NavButton, actionSheet, confirmAction, toast, useAsync, Empty } from '../ui/components';
 import { goBack, useNav } from '../ui/nav';
-import { Bell, Block, Camera, Lock, Logout, Moon, Shield, Trash, Info, CheckDouble, Key, Clock } from '../ui/icons';
+import { Bell, Block, Camera, Lock, Logout, Moon, Shield, Trash, Info, CheckDouble, Key, Clock, Vibrate, Check } from '../ui/icons';
+import { hapticsOn, setHaptics } from '../lib/haptics';
+import { currentAppIcon, setAppIcon, type AppIcon } from '../lib/appIcon';
 import { DevicesScreen } from './Devices';
 
 export function SettingsTab() {
   const nav = useNav();
   const me = useStore((s) => s.me)!;
   const theme = useStore((s) => s.theme);
+  const [haptics, setHapticsState] = useState(hapticsOn());
+  const [icon, setIcon] = useState<AppIcon>(currentAppIcon());
+  const chooseIcon = (v: AppIcon) => {
+    if (v === icon) return;
+    setAppIcon(v);
+    setIcon(v);
+    toast('Icon changed. On iPhone, add Haven to your Home Screen again to see it.');
+  };
 
   return (
     <Screen title="Settings" large grouped>
@@ -58,6 +68,21 @@ export function SettingsTab() {
           <span class="cell-main">
             <span class="cell-title">Appearance</span>
             <Segmented<Theme> value={theme} onChange={setTheme} options={[{ value: 'system', label: 'Auto' }, { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }]} />
+          </span>
+        </div>
+        <Cell icon={<Vibrate size={19} />} iconBg="ink" title="Haptics" right={<Toggle label="Haptics" checked={haptics} onChange={(v) => { setHaptics(v); setHapticsState(v); }} />} />
+        <div class="cell cell-stacked">
+          <span class="cell-icon filled"><img src={`/icons/${icon}/icon-192.png`} alt="" width={19} height={19} class="cell-icon-img" /></span>
+          <span class="cell-main">
+            <span class="cell-title">App icon</span>
+            <span class="icon-options">
+              {(['black', 'white', 'red'] as AppIcon[]).map((v) => (
+                <button key={v} class={`icon-option${v === icon ? ' on' : ''}`} onClick={() => chooseIcon(v)} aria-pressed={v === icon} aria-label={`${v} icon`}>
+                  <img src={`/icons/${v}/icon-192.png`} alt="" width={52} height={52} />
+                  <span>{v === icon && <Check size={12} stroke={2.6} />}{v}</span>
+                </button>
+              ))}
+            </span>
           </span>
         </div>
       </Section>

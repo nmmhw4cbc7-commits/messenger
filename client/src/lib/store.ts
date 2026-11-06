@@ -47,7 +47,7 @@ export interface ReplyRef {
 }
 
 export interface SystemBody {
-  type: 'group_created' | 'members_added' | 'member_removed' | 'member_left' | 'renamed' | 'member_joined' | 'photo_changed' | 'photo_removed' | 'theme_changed';
+  type: 'group_created' | 'members_added' | 'member_removed' | 'member_left' | 'renamed' | 'member_joined' | 'photo_changed' | 'photo_removed' | 'theme_changed' | 'pinned' | 'unpinned' | 'timer_changed';
   actorId: string;
   targetIds?: string[];
   title?: string;
@@ -77,6 +77,8 @@ export interface Msg {
   deleted?: boolean;
   /** Last time the sender edited the text. */
   editedAt?: number;
+  /** Disappearing message: deleted from every device this many seconds after it was sent. */
+  ttl?: number;
   createdAt: number;
   sortKey: number;
   status: 'pending' | 'sent' | 'failed' | 'received';
@@ -104,6 +106,10 @@ export interface Conv {
   last: Msg | null;
   /** Set when the user deleted the chat; it reappears with the next message. */
   hidden: boolean;
+  /** Pinned message (synced between members as an encrypted control message). */
+  pinned?: string;
+  /** Disappearing messages: new messages vanish after this many seconds (0/undefined = off). */
+  timer?: number;
 }
 
 export interface Pin {

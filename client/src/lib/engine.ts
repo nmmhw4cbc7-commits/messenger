@@ -48,6 +48,7 @@ export async function boot() {
     if (err instanceof ApiError && err.status === 401) return; // handled by the session listener
   }
   startRealtime();
+  pruneExpired().catch(() => {});
   refreshConversations().then(sync).catch(() => {});
   refreshCircle().catch(() => {});
   ensurePush().catch(() => {});
@@ -316,6 +317,8 @@ function mergeConv(server: ServerConv, local?: Conv): Conv {
     unread: local?.unread ?? 0,
     last: local?.last ?? null,
     hidden: local?.hidden ?? false,
+    ...(local?.pinned ? { pinned: local.pinned } : {}),
+    ...(local?.timer ? { timer: local.timer } : {}),
   };
 }
 
@@ -476,6 +479,7 @@ export async function loadMessages(convId: string) {
 async function addMessages(msgs: Msg[], countUnread: boolean) {
   if (!msgs.length) return;
   await idb.putMany('messages', msgs);
+  await trackExpiring(msgs);
   const s = getState();
   const meId = s.me?.id;
   const messages = { ...s.messages };
@@ -564,7 +568,7 @@ export async function sendText(convId: string, raw: string, reply?: ReplyRef) {
   const text = raw.replace(/\s+$/, '').replace(/^\s*\n/, '').slice(0, MAX_TEXT);
   if (!text.trim() || !getState().me) return;
   const now = Date.now();
-  const msg: Msg = { id: randomId(), convId, senderId: getState().me!.id, kind: 'text', text, createdAt: now, sortKey: now, status: 'pending' };
+  const msg: Msg = { id: randomId(), convId, senderId: getState().me!.id, kind: 'text', text, createdAt: now, sortKey: now, status: 'pending', ...ttlOf(convId) };
   if (reply) msg.reply = { id: reply.id, senderId: reply.senderId, text: reply.text.slice(0, 200) };
   await addMessages([msg], false);
   await addToOutbox(msg.id);
@@ -579,7 +583,13 @@ async function queue(msg: Msg) {
 
 function draft(convId: string, kind: Msg['kind']): Msg {
   const now = Date.now();
-  return { id: randomId(), convId, senderId: getState().me!.id, kind, createdAt: now, sortKey: now, status: 'pending' };
+  return { id: randomId(), convId, senderId: getState().me!.id, kind, createdAt: now, sortKey: now, status: 'pending', ...(kind === 'media' ? {} : ttlOf(convId)) };
+}
+
+/** New messages in a chat with disappearing messages on carry the timer. Vlogs never disappear early. */
+function ttlOf(convId: string): { ttl?: number } {
+  const t = getState().convs[convId]?.timer;
+  return t ? { ttl: t } : {};
 }
 
 /** Photos, videos and voice messages: stored locally first, uploaded when sending. */
@@ -587,6 +597,7 @@ export async function sendMedia(convId: string, blob: Blob, meta: Omit<MediaPayl
   if (!getState().me) return;
   const msg = draft(convId, 'media');
   msg.media = { ...meta, mime: blob.type || 'application/octet-stream', size: blob.size, path: '', key: '', iv: '' };
+  if (!meta.vlog) Object.assign(msg, ttlOf(convId));
   if (reply) msg.reply = reply;
   await storeLocalFile(msg.id, blob);
   await queue(msg);
@@ -693,6 +704,11 @@ function recipientsOf(conv: Conv) {
 }
 
 function payloadOf(msg: Msg): Payload {
+  const p = payloadBody(msg);
+  return msg.ttl ? ({ ...p, ttl: msg.ttl } as unknown as Payload) : p;
+}
+
+function payloadBody(msg: Msg): Payload {
   switch (msg.kind) {
     case 'media':
       return msg.reply ? { type: 'media', media: msg.media!, reply: msg.reply } : { type: 'media', media: msg.media! };
@@ -886,6 +902,7 @@ async function processBatch(batch: SyncMessage[]) {
   const votes: { target: string; userId: string; choices: number[] }[] = [];
   const opened: { target: string; userId: string }[] = [];
   const changes: { target: string; userId: string; text: string | null }[] = [];
+  const chatSettings: { convId: string; userId: string; id: string; at: number; payload: Payload }[] = [];
   for (const m of batch) {
     if (await idb.get('messages', m.id)) continue;
 
@@ -927,9 +944,14 @@ async function processBatch(batch: SyncMessage[]) {
       opened.push({ target: result.payload.target, userId: m.senderId! });
       continue;
     }
+    if (result.ok && (result.payload.type === 'pin' || result.payload.type === 'timer')) {
+      chatSettings.push({ convId: m.conversationId, userId: m.senderId!, id: m.id, at: m.createdAt, payload: result.payload });
+      continue;
+    }
     if (result.ok) {
       const p = result.payload;
-      const base = { id: m.id, convId: m.conversationId, senderId: m.senderId, createdAt: m.createdAt, sortKey: m.createdAt, status: (fromMe ? 'sent' : 'received') as 'sent' | 'received' };
+      const ttl = (p as { ttl?: number }).ttl;
+      const base = { id: m.id, convId: m.conversationId, senderId: m.senderId, createdAt: m.createdAt, sortKey: m.createdAt, status: (fromMe ? 'sent' : 'received') as 'sent' | 'received', ...(ttl ? { ttl } : {}) };
       if (p.type === 'text') out.push({ ...base, kind: 'text', text: p.text, ...(p.reply ? { reply: p.reply } : {}) });
       else if (p.type === 'media') out.push({ ...base, kind: 'media', media: p.media, ...(p.reply ? { reply: p.reply } : {}) });
       else if (p.type === 'location') out.push({ ...base, kind: 'location', location: { lat: p.lat, lng: p.lng, acc: p.acc } });
@@ -946,6 +968,8 @@ async function processBatch(batch: SyncMessage[]) {
   for (const c of changes) await applyChange(c.target, c.userId, c.text);
   await noteActivity(out, reactions, me.id);
   for (const v of votes) await applyVote(v.target, v.userId, v.choices);
+  for (const c of chatSettings) await applyChatSetting(c.convId, c.userId, c.id, c.at, c.payload);
+  if (out.some((m) => m.ttl)) pruneExpired().catch(() => {});
   for (const o of opened) {
     const target = await idb.get<Msg>('messages', o.target);
     if (target && target.senderId === me.id && target.media?.viewOnce) {
@@ -1520,6 +1544,71 @@ export async function deleteForEveryone(msg: Msg) {
   await updateMessage(deletedCopy(msg));
   if (path) api('POST', '/api/attachments/delete', { path }).catch(() => {});
 }
+
+// ------------------------------------------------------------------ pinned messages & disappearing messages
+
+const TIMER_LABEL: Record<number, string> = { 0: 'off', 3600: '1 hour', 86400: '24 hours', 604800: '7 days' };
+export const timerLabel = (s: number | undefined) => TIMER_LABEL[s ?? 0] ?? 'off';
+
+/** A pin or timer change from someone in the chat (or from me on another device). */
+async function applyChatSetting(convId: string, userId: string, id: string, at: number, payload: Payload) {
+  const conv = getState().convs[convId];
+  if (!conv) return;
+  if (payload.type === 'pin') {
+    if (payload.on) await saveConv({ ...conv, pinned: payload.target });
+    else if (conv.pinned === payload.target) await saveConv({ ...conv, pinned: undefined });
+    await addMessages([{ id, convId, senderId: null, kind: 'system', system: { type: payload.on ? 'pinned' : 'unpinned', actorId: userId }, createdAt: at, sortKey: at, status: 'received' }], false);
+  } else if (payload.type === 'timer') {
+    await saveConv({ ...conv, timer: payload.seconds || undefined });
+    await addMessages([{ id, convId, senderId: null, kind: 'system', system: { type: 'timer_changed', actorId: userId, title: timerLabel(payload.seconds) }, createdAt: at, sortKey: at, status: 'received' }], false);
+  }
+}
+
+export async function setPinned(msg: Msg, on: boolean) {
+  const me = getState().me;
+  const conv = getState().convs[msg.convId];
+  if (!me || !conv) return;
+  await sendPayload(msg.convId, { type: 'pin', target: msg.id, on }, { pushTo: [] });
+  await saveConv({ ...conv, pinned: on ? msg.id : undefined });
+  await localSystem(msg.convId, { type: on ? 'pinned' : 'unpinned', actorId: me.id });
+}
+
+export async function setChatTimer(convId: string, seconds: number) {
+  const me = getState().me;
+  const conv = getState().convs[convId];
+  if (!me || !conv || (conv.timer ?? 0) === seconds) return;
+  await sendPayload(convId, { type: 'timer', seconds }, { pushTo: [] });
+  await saveConv({ ...getState().convs[convId], timer: seconds || undefined });
+  await localSystem(convId, { type: 'timer_changed', actorId: me.id, title: timerLabel(seconds) });
+}
+
+type Expiring = { id: string; convId: string; at: number };
+
+async function trackExpiring(msgs: Msg[]) {
+  const timed = msgs.filter((m) => m.ttl && !m.deleted);
+  if (!timed.length) return;
+  const list = (await idb.get<Expiring[]>('meta', 'expiring').catch(() => undefined)) ?? [];
+  const known = new Set(list.map((e) => e.id));
+  for (const m of timed) if (!known.has(m.id)) list.push({ id: m.id, convId: m.convId, at: m.createdAt + m.ttl! * 1000 });
+  await idb.put('meta', list, 'expiring');
+}
+
+/** Delete disappearing messages whose time is up (with their files). */
+export async function pruneExpired() {
+  const list = (await idb.get<Expiring[]>('meta', 'expiring').catch(() => undefined)) ?? [];
+  if (!list.length) return;
+  const now = Date.now();
+  const due = list.filter((e) => e.at <= now);
+  if (!due.length) return;
+  for (const e of due) {
+    const msg = await idb.get<Msg>('messages', e.id);
+    if (msg) await deleteMessage(msg);
+  }
+  const ids = new Set(due.map((e) => e.id));
+  await idb.put('meta', list.filter((e) => !ids.has(e.id)), 'expiring');
+}
+
+window.setInterval(() => { pruneExpired().catch(() => {}); }, 60_000);
 
 // ------------------------------------------------------------------ push on by default
 

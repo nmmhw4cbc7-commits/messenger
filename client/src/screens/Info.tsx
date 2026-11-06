@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'preact/hooks';
-import { useStore, type Member } from '../lib/store';
+import { useStore, type Conv, type Member } from '../lib/store';
 import {
   avatarUrl, convTitle, displayName, otherMember, clearChat, block, unblock, listBlocked, renameGroup, addMembers,
   removeMember, leaveGroup, setRole, openDirect, setVerified, myDevices, acceptKeyChange, setAlias,
-  groupAvatarUrl, setGroupPhoto, removeGroupPhoto,
+  groupAvatarUrl, setGroupPhoto, removeGroupPhoto, setChatTimer,
 } from '../lib/engine';
 import { editAvatar } from '../ui/AvatarEditor';
 import { pickFile } from './Attachments';
@@ -12,7 +12,7 @@ import { prettyPhone } from '../lib/phone';
 import { openThemePicker, themeName } from '../ui/ChatTheme';
 import { Avatar, Button, Cell, Screen, Section, Spinner, Toggle, actionSheet, confirmAction, toast, useAsync } from '../ui/components';
 import { getNav, goBack, goBackMany, useNav } from '../ui/nav';
-import { Block, Key, PersonAdd, Pencil, Trash, Exit, Shield, Camera, Palette } from '../ui/icons';
+import { Block, Key, PersonAdd, Pencil, Trash, Exit, Shield, Camera, Palette, Timer } from '../ui/icons';
 import { PeoplePicker } from './NewChat';
 import { ChatScreen } from './Chat';
 import { usePresence } from '../ui/usePresence';
@@ -22,6 +22,17 @@ function VerifiedLabel({ userId }: { userId: string }) {
   const pin = useStore((s) => s.pins[userId]);
   if (!pin) return null;
   return pin.verified ? <span class="tag good"><Shield size={13} /> Verified</span> : <span class="tag">Not verified</span>;
+}
+
+/** Pick how long new messages in this chat last. Everyone in the chat gets the same setting. */
+function chooseTimer(conv: Conv) {
+  const pick = (seconds: number) => () => { setChatTimer(conv.id, seconds).catch((err) => toast(err instanceof Error ? err.message : 'Could not change this', 'error')); };
+  actionSheet([
+    { label: '1 hour', run: pick(3600) },
+    { label: '24 hours', run: pick(86400) },
+    { label: '7 days', run: pick(604800) },
+    { label: 'Off', run: pick(0) },
+  ], { title: 'Disappearing messages', message: 'New messages in this chat disappear for everyone after this time. Messages sent before stay.' });
 }
 
 export function ContactInfo({ convId }: { convId: string }) {
@@ -91,6 +102,7 @@ export function ContactInfo({ convId }: { convId: string }) {
       {!conv.left && (
         <Section>
           <Cell icon={<Palette size={20} />} title="Chat theme" value={themeName(conv.theme)} chevron onClick={() => openThemePicker(conv)} />
+          <Cell icon={<Timer size={20} />} title="Disappearing messages" value={({ 3600: '1h', 86400: '24h', 604800: '7d' } as Record<number, string>)[conv.timer ?? 0] ?? 'Off'} chevron onClick={() => chooseTimer(conv)} />
         </Section>
       )}
 
@@ -218,6 +230,7 @@ export function GroupInfo({ convId }: { convId: string }) {
       {!conv.left && (
         <Section>
           <Cell icon={<Palette size={20} />} title="Chat theme" value={themeName(conv.theme)} chevron onClick={() => openThemePicker(conv)} />
+          <Cell icon={<Timer size={20} />} title="Disappearing messages" value={({ 3600: '1h', 86400: '24h', 604800: '7d' } as Record<number, string>)[conv.timer ?? 0] ?? 'Off'} chevron onClick={() => chooseTimer(conv)} />
         </Section>
       )}
 

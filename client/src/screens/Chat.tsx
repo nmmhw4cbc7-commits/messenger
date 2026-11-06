@@ -3,13 +3,14 @@ import type { JSX } from 'preact';
 import { useStore, type Conv, type Msg, type ReplyRef } from '../lib/store';
 import {
   avatarUrl, chatAvatarUrl, convTitle, displayName, loadMessages, otherMember, sendText, sendTyping, typingLabel, setOpenConv, retry, deleteMessage, deleteForEveryone, editMessage, acceptKeyChange,
-  react, isReadByAll, summarize,
+  react, isReadByAll, summarize, setPinned, timerLabel,
 } from '../lib/engine';
 import { MediaView, LocationCard, ContactCard, PollCard, VoiceRecorder, openAttachSheet, Mic, Plus } from './Attachments';
 import { formatDay, formatTime, sameDay } from '../lib/format';
 import { Avatar, Button, confirmAction, toast } from '../ui/components';
 import { getNav, goBack, useNav } from '../ui/nav';
-import { ArrowUp, ChevronLeft, Clock, Alert, Check, CheckDouble, Lock, Reply, Close, Copy, Trash, Pencil } from '../ui/icons';
+import { ArrowUp, ChevronLeft, Clock, Alert, Check, CheckDouble, Lock, Reply, Close, Copy, Trash, Pencil, Pin, Timer } from '../ui/icons';
+import { haptic } from '../lib/haptics';
 import { describeSystem } from './system';
 import { usePresence } from '../ui/usePresence';
 import { ContactInfo, GroupInfo, SafetyNumberScreen } from './Info';
@@ -17,7 +18,6 @@ import { ContactInfo, GroupInfo, SafetyNumberScreen } from './Info';
 const GROUP_GAP = 3 * 60_000;
 const coarse = matchMedia('(pointer: coarse)').matches;
 const REACTIONS = ['❤️', '👍', '😂', '😮', '😢', '🙏'];
-const haptic = (ms = 8) => navigator.vibrate?.(ms);
 
 interface MenuState {
   msg: Msg;
@@ -31,6 +31,7 @@ export function ChatScreen({ convId }: { convId: string }) {
   const allMessages = useStore((s) => s.messages[convId]);
   // Vlog posts are shown on the Today screen, not in the chat.
   const messages = useMemo(() => allMessages?.filter((m) => !m.media?.vlog), [allMessages]);
+  const pinnedMsg = conv?.pinned ? allMessages?.find((m) => m.id === conv.pinned && !m.deleted) : undefined;
   const me = useStore((s) => s.me);
   const pins = useStore((s) => s.pins);
   useStore((s) => s.aliases); // re-render when contact names change
@@ -91,6 +92,20 @@ export function ChatScreen({ convId }: { convId: string }) {
         </div>
       </header>
 
+      {pinnedMsg && (
+        <div class="pinned-bar">
+          <button class="pinned-main" onClick={() => scrollToMessage(pinnedMsg.id)}>
+            <Pin size={16} />
+            <span class="pinned-text">
+              <strong>Pinned</strong>
+              <span>{summarize(pinnedMsg)}</span>
+            </span>
+          </button>
+          {!conv.left && <button class="pinned-close" aria-label="Unpin" onClick={() => setPinned(pinnedMsg, false).catch((err) => toast(err instanceof Error ? err.message : 'Could not unpin', 'error'))}><Close size={16} /></button>}
+        </div>
+      )}
+      {conv.timer ? <div class="timer-chip"><Timer size={13} /> Disappearing messages · {timerLabel(conv.timer)}</div> : null}
+
       {changed.length > 0 && (
         <div class="banner warn" role="alert">
           <p>
@@ -125,6 +140,7 @@ export function ChatScreen({ convId }: { convId: string }) {
           state={menu}
           meId={me.id}
           canReply={!blockedReason}
+          pinned={conv.pinned === menu.msg.id}
           onClose={() => setMenu(null)}
           onReply={() => startReply(menu.msg)}
         />
@@ -421,10 +437,11 @@ function Bubble({ msg, conv, meId, first, last, onReply, onMenu, nameOf }: {
 
 // ------------------------------------------------------------------ long-press menu
 
-function ContextMenu({ state, meId, canReply, onClose, onReply }: {
+function ContextMenu({ state, meId, canReply, pinned, onClose, onReply }: {
   state: MenuState;
   meId: string;
   canReply: boolean;
+  pinned: boolean;
   onClose: () => void;
   onReply: () => void;
 }) {
@@ -447,7 +464,7 @@ function ContextMenu({ state, meId, canReply, onClose, onReply }: {
   const hasBar = msg.kind !== 'undecryptable' && msg.status !== 'pending' && msg.status !== 'failed' && !msg.deleted;
   const barHeight = hasBar ? 58 : 0;
   const canEdit = sent && msg.kind === 'text';
-  const actionCount = (canReplyTo && canReply ? 1 : 0) + (msg.kind === 'text' && !msg.deleted ? 1 : 0) + (canEdit ? 1 : 0) + (msg.status === 'failed' ? 1 : 0) + (sent ? 1 : 0) + 1;
+  const actionCount = (canReplyTo && canReply ? 2 : 0) + (msg.kind === 'text' && !msg.deleted ? 1 : 0) + (canEdit ? 1 : 0) + (msg.status === 'failed' ? 1 : 0) + (sent ? 1 : 0) + 1;
   const actionsHeight = 34 + 48 * actionCount + 8;
   const bubbleH = Math.min(rect.height, vh * 0.3);
   const safeTop = 56;
@@ -459,6 +476,9 @@ function ContextMenu({ state, meId, canReply, onClose, onReply }: {
   const actions: { label: string; icon: JSX.Element; danger?: boolean; run: () => void }[] = [];
   if (canReplyTo && canReply) actions.push({ label: 'Reply', icon: <Reply size={19} />, run: onReply });
   if (canEdit) actions.push({ label: 'Edit', icon: <Pencil size={19} />, run: () => openEditSheet(msg) });
+  if (canReplyTo && canReply && msg.kind !== 'system' && msg.kind !== 'notice') {
+    actions.push({ label: pinned ? 'Unpin' : 'Pin', icon: <Pin size={19} />, run: () => setPinned(msg, !pinned).catch((err) => toast(err instanceof Error ? err.message : 'Could not pin', 'error')) });
+  }
   if (msg.kind === 'text' && !msg.deleted) {
     actions.push({
       label: 'Copy',

@@ -31,6 +31,9 @@ const Chart = ({ size = 24 }: { size?: number }) => (
     <path d="M5 19.5V11M12 19.5V5M19 19.5v-6" />
   </svg>
 );
+
+/** Waveform bars as columns of dots (dot-matrix): 1 to 6 dots, 4px apart. */
+const dotBar = (v: number) => 4 * (1 + Math.round(Math.min(1, Math.max(0, v)) * 5));
 export const Mic = ({ size = 22 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <rect x="9" y="3.5" width="6" height="11" rx="3" /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v2.5" />
@@ -476,7 +479,7 @@ function VoicePlayer({ msg }: { msg: Msg }) {
         {state === 'loading' ? <Spinner size={16} /> : state === 'playing' ? <Pause /> : <Play />}
       </button>
       <span class="voice-wave" aria-hidden="true">
-        {wave.map((v, i) => <span key={i} class={i / wave.length < progress ? 'on' : ''} style={{ height: `${Math.round(4 + v * 20)}px` }} />)}
+        {wave.map((v, i) => <span key={i} class={i / wave.length < progress ? 'on' : ''} style={{ height: `${dotBar(v)}px` }} />)}
       </span>
       <span class="voice-time">{formatDuration(state === 'idle' ? media.duration ?? 0 : (audio.current?.currentTime ?? 0))}</span>
     </div>
@@ -534,7 +537,7 @@ export function VoiceRecorder({ convId, onDone }: { convId: string; onDone: () =
       <div class="recorder-body">
         <span class="recorder-time">{formatDuration(seconds)}</span>
         <span class="recorder-levels" aria-hidden="true">
-          {levels.map((v, i) => <span key={i} style={{ height: `${Math.round(3 + v * 22)}px` }} />)}
+          {levels.map((v, i) => <span key={i} style={{ height: `${dotBar(v)}px` }} />)}
         </span>
       </div>
       <button class="send-button ready" onClick={send} disabled={busy} aria-label="Send voice message"><ArrowUp size={20} /></button>
