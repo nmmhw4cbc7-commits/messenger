@@ -3,7 +3,7 @@ import type { JSX } from 'preact';
 import { useStore, type Conv, type Msg, type ReplyRef } from '../lib/store';
 import {
   avatarUrl, chatAvatarUrl, convTitle, displayName, loadMessages, otherMember, sendText, sendTyping, typingLabel, setOpenConv, retry, deleteMessage, deleteForEveryone, editMessage, acceptKeyChange,
-  react, isReadByAll, summarize, setPinned, timerLabel,
+  react, isReadByAll, summarize, setPinned, timerLabel, setStatusBarColor,
 } from '../lib/engine';
 import { MediaView, LocationCard, ContactCard, PollCard, VoiceRecorder, openAttachSheet, Mic, Plus } from './Attachments';
 import { formatDay, formatTime, sameDay } from '../lib/format';
@@ -32,6 +32,11 @@ export function ChatScreen({ convId }: { convId: string }) {
   // Vlog posts are shown on the Today screen, not in the chat.
   const messages = useMemo(() => allMessages?.filter((m) => !m.media?.vlog), [allMessages]);
   const pinnedMsg = conv?.pinned ? allMessages?.find((m) => m.id === conv.pinned && !m.deleted) : undefined;
+  // A black chat theme paints the status bar black too.
+  useEffect(() => {
+    setStatusBarColor(conv?.theme === 'glyph' ? '#000000' : null);
+    return () => setStatusBarColor(null);
+  }, [conv?.theme]);
   const me = useStore((s) => s.me);
   const pins = useStore((s) => s.pins);
   useStore((s) => s.aliases); // re-render when contact names change
