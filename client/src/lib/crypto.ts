@@ -103,6 +103,8 @@ export interface MediaPayload {
   wave?: number[];
   caption?: string;
   viewOnce?: boolean;
+  /** Sent in full resolution. */
+  hd?: boolean;
   /** Part of the Vlog your Day of this day (YYYY-MM-DD). */
   vlog?: string;
 }
@@ -152,6 +154,7 @@ function cleanMedia(m: unknown): MediaPayload | null {
   if (str(o.thumb, 6000) && (o.thumb as string).startsWith('data:image/jpeg;base64,')) out.thumb = o.thumb as string;
   if (Array.isArray(o.wave) && o.wave.length <= 64 && o.wave.every((v) => num(v, 0, 1))) out.wave = o.wave as number[];
   if (str(o.caption, 2000) && o.caption) out.caption = o.caption as string;
+  if (o.hd === true && o.kind === 'image') out.hd = true;
   if (o.viewOnce === true && o.kind === 'image') out.viewOnce = true;
   if (typeof o.vlog === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(o.vlog) && o.kind !== 'voice') out.vlog = o.vlog;
   return out;
