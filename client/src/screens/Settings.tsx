@@ -11,7 +11,8 @@ import { parsePhoneNumberFromString } from 'libphonenumber-js/min';
 import { errorMessage } from '../lib/api';
 import { Avatar, Button, Cell, Screen, Section, Segmented, Spinner, Toggle, NavButton, actionSheet, confirmAction, toast, useAsync, Empty } from '../ui/components';
 import { goBack, useNav } from '../ui/nav';
-import { Bell, Block, Camera, Lock, Logout, Moon, Shield, Trash, Info, CheckDouble, Key, Clock, Vibrate, Check } from '../ui/icons';
+import { Bell, Block, Camera, Lock, Logout, Moon, Shield, Trash, Info, CheckDouble, Key, Clock, Vibrate, Check, Cloud } from '../ui/icons';
+import { BackupScreen } from './Backup';
 import { hapticsOn, setHaptics } from '../lib/haptics';
 import { currentAppIcon, setAppIcon, type AppIcon } from '../lib/appIcon';
 import { DevicesScreen } from './Devices';
@@ -62,6 +63,7 @@ export function SettingsTab() {
       </Section>
 
       <Section header="Preferences">
+        <Cell icon={<Cloud size={19} />} iconBg="ink" title="Chat backup" chevron onClick={() => nav.push(<BackupScreen />)} />
         <Cell icon={<Bell size={19} />} iconBg="ink" title="Notifications" chevron onClick={() => nav.push(<Notifications />)} />
         <div class="cell cell-stacked">
           <span class="cell-icon filled"><Moon size={19} /></span>

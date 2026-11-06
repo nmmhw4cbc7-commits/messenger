@@ -11,7 +11,6 @@ import { Avatar, Button, confirmAction, toast } from '../ui/components';
 import { getNav, goBack, useNav } from '../ui/nav';
 import { ArrowUp, ChevronLeft, Clock, Alert, Check, CheckDouble, Lock, Reply, Close, Copy, Trash, Pencil, Pin, Timer } from '../ui/icons';
 import { haptic } from '../lib/haptics';
-import { ResendOffer } from '../ui/ResendOffer';
 import { describeSystem } from './system';
 import { usePresence } from '../ui/usePresence';
 import { ContactInfo, GroupInfo, SafetyNumberScreen } from './Info';
@@ -110,7 +109,6 @@ export function ChatScreen({ convId }: { convId: string }) {
           {!conv.left && <button class="pinned-close" aria-label="Unpin" onClick={() => setPinned(pinnedMsg, false).catch((err) => toast(err instanceof Error ? err.message : 'Could not unpin', 'error'))}><Close size={16} /></button>}
         </div>
       )}
-      <ResendOffer conv={conv} />
       {conv.timer ? <div class="timer-chip"><Timer size={13} /> Disappearing messages · {timerLabel(conv.timer)}</div> : null}
 
       {changed.length > 0 && (

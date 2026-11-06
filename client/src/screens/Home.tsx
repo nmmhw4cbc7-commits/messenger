@@ -18,6 +18,7 @@ const TodayPane = memo(() => <TodayTab />);
 const ChatsPane = memo(() => <ChatsTab />);
 const SettingsPane = memo(() => <SettingsTab />);
 
+import { checkBackupOnStart } from './Backup';
 export function Home() {
   const nav = useNav();
   const [tab, setTab] = useState<'today' | 'chats' | 'settings'>('today');
@@ -49,7 +50,8 @@ export function Home() {
       if (e.data?.type === 'open-screen' && typeof e.data.screen === 'string') openScreen(e.data.screen);
     };
     navigator.serviceWorker?.addEventListener('message', onMessage);
-    return () => navigator.serviceWorker?.removeEventListener('message', onMessage);
+    const t = setTimeout(() => checkBackupOnStart(), 1500);
+    return () => { clearTimeout(t); navigator.serviceWorker?.removeEventListener('message', onMessage); };
   }, []);
   const unread = useStore((s) => Object.values(s.convs).reduce((n, c) => n + (c.hidden ? 0 : c.unread), 0));
   const myTurn = useStore((s) => Boolean(s.circle?.id && s.me && s.circle.picks.some((p) => p.day === s.circle!.today && p.userId === s.me!.id)));

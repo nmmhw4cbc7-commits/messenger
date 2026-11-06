@@ -707,7 +707,7 @@ async function cleanup() {
   await sql`delete from haven.rate_limits where reset_at < ${t}`;
   await sql`delete from haven.messages where created_at < ${t - RETENTION_DAYS * DAY}`;
   await sql`delete from haven.messages m where not exists (select 1 from haven.message_recipients r where r.seq = m.seq)`;
-  const old = await sql`select name from storage.objects where bucket_id = 'attachments' and created_at < now() - make_interval(days => ${RETENTION_DAYS}) limit 200`;
+  const old = await sql`select name from storage.objects where bucket_id = 'attachments' and name not like 'backups/%' and created_at < now() - make_interval(days => ${RETENTION_DAYS}) limit 200`;
   if (old.length) await storageCall('DELETE', '/object/attachments', { prefixes: old.map((o) => o.name) }).catch(() => {});
   // Vlogs are kept on the server for a week; devices keep their decrypted copies.
   const vlogs = await sql`select o.name from storage.objects o join haven.conversations c on c.id = split_part(o.name, '/', 1) and c.circle
@@ -941,6 +941,84 @@ route('POST', '/link/history/finish', async ({ req, reply }) => {
   return ok;
 });
 
+// ---- encrypted chat backup
+//
+// The phone encrypts its chats with a random backup key before uploading. That
+// key is stored here only wrapped with a key derived from the user's backup PIN
+// (on the phone; the server never sees it). To get the wrapped key back, the
+// phone proves it knows the PIN with a second value derived from it; the server
+// checks that with scrypt and allows 5 tries, then 24 hours of waiting.
+
+const backupPath = (userId: string) => `backups/${userId}`;
+const B64_SHORT = str(16, 200, B64URL);
+
+route('GET', '/backup', async ({ req, reply }) => {
+  const user = await currentUser(req, reply);
+  return { enabled: Boolean(user.backup_auth), salt: user.backup_salt ?? null, updatedAt: Number(user.backup_updated_at ?? 0) };
+});
+
+route('PUT', '/backup/pin', async ({ req, reply, body }) => {
+  const user = await currentUser(req, reply);
+  const b = shape<{ salt: string; auth: string; wrapped: string }>(body, { salt: [B64_SHORT, true], auth: [B64_SHORT, true], wrapped: [B64_SHORT, true] });
+  await enforce(`backuppin:${user.id}`, 10, HOUR);
+  await sql`update haven.users set backup_salt = ${b.salt}, backup_auth = ${await hashPin(b.auth)}, backup_wrapped = ${b.wrapped},
+            backup_failures = 0, backup_locked_until = 0 where id = ${user.id}`;
+  return ok;
+});
+
+route('POST', '/backup/unlock', async ({ req, reply, body }) => {
+  const user = await currentUser(req, reply);
+  const { auth } = shape<{ auth: string }>(body, { auth: [B64_SHORT, true] });
+  await enforce(`backupunlock:${user.id}`, 20, HOUR);
+  if (!user.backup_auth) throw new HttpError(404, 'no_backup', 'There is no backup for this account.');
+  if (Number(user.backup_locked_until) > now()) {
+    throw new HttpError(429, 'backup_locked', 'Too many wrong PINs. Try again later.', { retryAfter: Math.ceil((Number(user.backup_locked_until) - now()) / 1000) });
+  }
+  if (!(await verifyPin(auth, user.backup_auth))) {
+    const failures = Number(user.backup_failures) + 1;
+    const locked = failures >= 5 ? now() + DAY : 0;
+    await sql`update haven.users set backup_failures = ${locked ? 0 : failures}, backup_locked_until = ${locked} where id = ${user.id}`;
+    throw new HttpError(400, 'invalid_pin', locked ? 'Too many wrong PINs. Try again in 24 hours.' : 'Wrong backup PIN.', { attemptsLeft: locked ? 0 : 5 - failures });
+  }
+  await sql`update haven.users set backup_failures = 0 where id = ${user.id}`;
+  let url: string | null = null;
+  if (Number(user.backup_updated_at)) {
+    const data = await storageCall('POST', `/object/sign/attachments/${backupPath(user.id)}`, { expiresIn: 600 }).catch(() => null);
+    if (data) url = `${SUPABASE_URL}/storage/v1${data.signedURL ?? data.signedUrl}`;
+  }
+  return { wrapped: user.backup_wrapped, url, updatedAt: Number(user.backup_updated_at) };
+});
+
+route('POST', '/backup/upload', async ({ req, reply, body }) => {
+  const user = await currentUser(req, reply);
+  shape<{ size: number }>(body, { size: [int(1, MAX_ATTACHMENT), true] });
+  if (!user.backup_auth) throw new HttpError(400, 'no_backup', 'Set a backup PIN first.');
+  await enforce(`backupup:${user.id}`, 120, HOUR);
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/upload/sign/attachments/${backupPath(user.id)}`, {
+    method: 'POST',
+    headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}`, 'Content-Type': 'application/json', 'x-upsert': 'true' },
+    body: '{}',
+    signal: AbortSignal.timeout(10_000),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`storage ${res.status}: ${JSON.stringify(data)}`);
+  return { uploadUrl: `${SUPABASE_URL}/storage/v1${data.url}` };
+});
+
+route('POST', '/backup/done', async ({ req, reply }) => {
+  const user = await currentUser(req, reply);
+  const t = now();
+  await sql`update haven.users set backup_updated_at = ${t} where id = ${user.id}`;
+  return { updatedAt: t };
+});
+
+route('DELETE', '/backup', async ({ req, reply }) => {
+  const user = await currentUser(req, reply);
+  await storageCall('DELETE', '/object/attachments', { prefixes: [backupPath(user.id)] }).catch(() => {});
+  await sql`update haven.users set backup_salt = null, backup_auth = null, backup_wrapped = null, backup_updated_at = 0 where id = ${user.id}`;
+  return ok;
+});
+
 // ---- me
 
 route('GET', '/me', async ({ req, reply }) => ({ me: await meOf(await currentUser(req, reply)) }));
@@ -1025,6 +1103,7 @@ route('DELETE', '/me', async ({ req, reply, body }) => {
     for (const g of groups) await ensureAdmin(tx, g.id);
     await tx`delete from haven.conversations c where not exists (select 1 from haven.members m where m.conversation_id = c.id)`;
   });
+  await storageCall('DELETE', '/object/attachments', { prefixes: [backupPath(user.id)] }).catch(() => {});
   reply.cookie(sessionCookie('', 0));
   await broadcast(contacts, 'conversations');
   await notifyMessages(contacts);
