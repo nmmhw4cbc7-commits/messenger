@@ -204,12 +204,32 @@ export async function setTheme(theme: Theme) {
   await idb.put('meta', theme, 'theme');
 }
 
+let appliedTheme: Theme = 'system';
+let statusOverride: string | null = null;
+
 function applyTheme(theme: Theme) {
   const root = document.documentElement;
   if (theme === 'system') root.removeAttribute('data-theme');
   else root.setAttribute('data-theme', theme);
-  const dark = theme === 'dark' || (theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#000000' : '#f2f2f2');
+  appliedTheme = theme;
+  paintStatusBar();
+}
+
+/**
+ * The phone's status bar (time, battery) takes the app's own background colour,
+ * light or dark. A screen with its own background (a black chat theme) can override it.
+ */
+function paintStatusBar() {
+  const [light, dark] = [...document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')];
+  if (!light || !dark) return;
+  const forced = statusOverride ?? (appliedTheme === 'dark' ? '#000000' : appliedTheme === 'light' ? '#f2f2f2' : null);
+  light.content = forced ?? '#f2f2f2';
+  dark.content = forced ?? '#000000';
+}
+
+export function setStatusBarColor(color: string | null) {
+  statusOverride = color;
+  paintStatusBar();
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(getState().theme));
 
