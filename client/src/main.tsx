@@ -58,7 +58,32 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
   navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
 }
 
+// Errors outside of drawing (e.g. while starting) must not leave a black screen either.
+function showStartupError(reason: unknown) {
+  const app = document.getElementById('app');
+  if (!app || app.querySelector('.screen, .stack, .problem')) return;
+  const msg = reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason);
+  app.innerHTML = '';
+  const box = document.createElement('div');
+  box.className = 'problem';
+  box.innerHTML = '<h1>Something went wrong</h1><p>Haven could not open. Your chats and keys are safe on this device.</p><code></code>'
+    + '<button class="btn btn-primary" data-act="reload"><span class="btn-label">Try again</span></button>'
+    + '<button class="btn btn-secondary" data-act="repair"><span class="btn-label">Repair app</span></button>';
+  box.querySelector('code')!.textContent = msg;
+  box.addEventListener('click', async (e) => {
+    const act = (e.target as HTMLElement).closest('button')?.dataset.act;
+    if (act === 'repair') {
+      try {
+        for (const r of (await navigator.serviceWorker?.getRegistrations?.()) ?? []) await r.unregister();
+        for (const k of (await caches?.keys?.()) ?? []) await caches.delete(k);
+      } catch { /* reload anyway */ }
+    }
+    if (act) location.reload();
+  });
+  app.appendChild(box);
+}
+window.addEventListener('error', (e) => setTimeout(() => showStartupError(e.error ?? e.message), 0));
+window.addEventListener('unhandledrejection', (e) => setTimeout(() => showStartupError(e.reason), 0));
+
 render(<App />, document.getElementById('app')!);
-boot().catch(() => {
-  document.getElementById('app')!.textContent = 'Haven could not start. Please make sure your browser allows storage for this site.';
-});
+boot().catch((err) => showStartupError(err));

@@ -2472,3 +2472,10 @@ button.vlog-reaction:active { transform: scale(0.94); }
 .chat-header-sub.typing, .chat-row-preview.typing { color: var(--signal); font-style: italic; }
 .vlog-action em { font-style: normal; font-size: 11.5px; font-weight: 500; opacity: 0.8; }
 .older-loading { height: 40px; }
+
+/* Recovery screen instead of a blank page */
+.problem { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; gap: 14px; padding: calc(var(--safe-top) + 24px) 24px calc(var(--safe-bottom) + 24px); background: var(--bg); color: var(--text); }
+.problem h1 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+.problem p { margin: 0; font-size: 15.5px; line-height: 1.45; color: var(--text-2); }
+.problem code { display: block; padding: 12px 14px; border-radius: 12px; background: var(--bg-elevated); box-shadow: 0 0 0 0.5px var(--sep); font-family: var(--mono); font-size: 12.5px; line-height: 1.5; word-break: break-word; user-select: text; -webkit-user-select: text; }
+.problem .problem-hint { font-size: 13px; color: var(--text-3); }
