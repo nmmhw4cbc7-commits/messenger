@@ -49,7 +49,8 @@ export async function boot() {
   }
   startRealtime();
   pruneExpired().catch(() => {});
-  refreshConversations().then(sync).catch(() => {});
+  refreshConversations().then(sync).then(() => autoResend()).catch(() => {});
+  setTimeout(() => runBackup().catch(() => {}), 20_000);
   refreshCircle().catch(() => {});
   ensurePush().catch(() => {});
 }
@@ -280,6 +281,7 @@ async function checkPins(members: Profile[]) {
   await idb.putMany('pins', changed);
   setState({ pins });
 
+  if (notices.length) queueResend(notices.map((n) => n.userId)).then(() => autoResend()).catch(() => {});
   for (const n of notices) {
     const convIds = Object.values(getState().convs).filter((c) => c.members.some((m) => m.id === n.userId)).map((c) => c.id);
     const now = Date.now();
@@ -364,6 +366,7 @@ export function refreshConversations(): Promise<void> {
 }
 
 async function saveConv(conv: Conv) {
+  backupDirty = true;
   await idb.put('convs', conv);
   setState((s) => ({ convs: { ...s.convs, [conv.id]: conv } }));
 }
@@ -477,6 +480,7 @@ export async function clearChat(convId: string) {
 }
 
 export async function deleteMessage(msg: Msg) {
+  backupDirty = true;
   await idb.del('messages', msg.id);
   if (msg.media) await forgetFile(msg.id);
   const list = (getState().messages[msg.convId] ?? []).filter((m) => m.id !== msg.id);
@@ -499,6 +503,7 @@ export async function loadMessages(convId: string) {
 async function addMessages(msgs: Msg[], countUnread: boolean) {
   if (!msgs.length) return;
   await idb.putMany('messages', msgs);
+  backupDirty = true;
   await trackExpiring(msgs);
   const s = getState();
   const meId = s.me?.id;
@@ -538,6 +543,7 @@ async function addMessages(msgs: Msg[], countUnread: boolean) {
 }
 
 async function updateMessage(msg: Msg) {
+  backupDirty = true;
   await idb.put('messages', msg);
   setState((s) => {
     const list = s.messages[msg.convId];
@@ -1624,6 +1630,178 @@ export async function resendHistoryTo(userId: string, onProgress?: (n: number) =
   await dismissResend(userId);
   return sent;
 }
+
+const RESEND_QUEUE = 'resendQueue';
+const RESEND_SCAN = 'resendScan1';
+let resending = false;
+
+async function queueResend(userIds: string[]) {
+  const queue = (await idb.get<string[]>('meta', RESEND_QUEUE).catch(() => undefined)) ?? [];
+  await idb.put('meta', [...new Set([...queue, ...userIds])], RESEND_QUEUE);
+}
+
+/**
+ * Without anyone tapping anything: when a contact set Haven up again (their keys
+ * changed), send them my own messages and vlogs of the last 30 days.
+ */
+export async function autoResend() {
+  if (resending || !getState().me || !identity) return;
+  resending = true;
+  try {
+    // Contacts whose keys changed before this existed (last 7 days).
+    if (!(await idb.get('meta', RESEND_SCAN).catch(() => undefined))) {
+      const since = Date.now() - 7 * 24 * 3600_000;
+      const ids = (await idb.getAll<Msg>('messages')).filter((m) => m.kind === 'notice' && m.notice?.type === 'key_changed' && m.createdAt > since).map((m) => m.notice!.userId);
+      await queueResend(ids);
+      await idb.put('meta', true, RESEND_SCAN);
+    }
+    const queue = (await idb.get<string[]>('meta', RESEND_QUEUE).catch(() => undefined)) ?? [];
+    if (!queue.length) return;
+    const handled = await loadResendHandled();
+    const left: string[] = [];
+    for (const userId of queue) {
+      const pin = getState().pins[userId];
+      if (!pin || handled[userId] === pin.fp) continue;
+      try {
+        await resendHistoryTo(userId);
+      } catch {
+        left.push(userId); // offline or similar: try again next time
+      }
+    }
+    await idb.put('meta', left, RESEND_QUEUE);
+  } finally {
+    resending = false;
+  }
+}
+
+// ------------------------------------------------------------------ encrypted chat backup
+//
+// Chats live only on the phone, so removing the app (or losing the phone) would
+// lose them. With a backup PIN, the phone keeps an encrypted copy on the server:
+// encrypted here with a random backup key; that key is stored on the server only
+// wrapped with a key derived from the PIN. The server never sees the PIN, the
+// key or any message. To unwrap, the phone proves it knows the PIN (5 tries).
+
+const BACKUP_KEY = 'backupKey';
+const BACKUP_AT = 'backupAt';
+let backupDirty = true;
+let backingUp: Promise<void> | null = null;
+
+export interface BackupStatus { enabled: boolean; salt: string | null; updatedAt: number; local: boolean; localAt: number }
+
+export async function backupStatus(): Promise<BackupStatus> {
+  const res = await api<{ enabled: boolean; salt: string | null; updatedAt: number }>('GET', '/api/backup');
+  const local = Boolean(await idb.get('meta', BACKUP_KEY).catch(() => undefined));
+  const localAt = (await idb.get<number>('meta', BACKUP_AT).catch(() => undefined)) ?? 0;
+  return { ...res, local, localAt };
+}
+
+async function pinKeys(pin: string, salt: Uint8Array<ArrayBuffer>) {
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveBits']);
+  const bits = new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 600_000 }, base, 512));
+  const kek = await crypto.subtle.importKey('raw', bits.slice(0, 32), 'AES-GCM', false, ['encrypt', 'decrypt']);
+  return { kek, auth: toB64u(bits.slice(32)) };
+}
+
+async function aesSeal(key: CryptoKey, data: Uint8Array<ArrayBuffer>) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data));
+  const out = new Uint8Array(12 + ct.length);
+  out.set(iv);
+  out.set(ct, 12);
+  return out;
+}
+
+async function aesOpen(key: CryptoKey, data: Uint8Array<ArrayBuffer>) {
+  return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: data.slice(0, 12) }, key, data.slice(12)));
+}
+
+const backupCryptoKey = (raw: Uint8Array<ArrayBuffer>) => crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
+
+/** Turn on backups (or change the PIN). Keeps the existing backup key if this phone has one. */
+export async function setBackupPin(pin: string) {
+  let raw = await idb.get<Uint8Array<ArrayBuffer>>('meta', BACKUP_KEY).catch(() => undefined);
+  if (!raw) raw = crypto.getRandomValues(new Uint8Array(32));
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const { kek, auth } = await pinKeys(pin, salt);
+  const wrapped = toB64u(await aesSeal(kek, raw));
+  await api('PUT', '/api/backup/pin', { salt: toB64u(salt), auth, wrapped });
+  await idb.put('meta', raw, BACKUP_KEY);
+  backupDirty = true;
+  await runBackup(true);
+}
+
+/** Upload an encrypted copy of the chats on this phone (if backups are on and something changed). */
+export function runBackup(force = false): Promise<void> {
+  if (backingUp) return backingUp;
+  backingUp = (async () => {
+    if (!getState().me || (!force && !backupDirty)) return;
+    const raw = await idb.get<Uint8Array<ArrayBuffer>>('meta', BACKUP_KEY).catch(() => undefined);
+    if (!raw) return;
+    backupDirty = false;
+    try {
+      const bundle: HistoryBundle = {
+        v: 1,
+        convs: await idb.getAll<Conv>('convs'),
+        messages: (await idb.getAll<Msg>('messages')).filter((m) => m.kind !== 'notice' && m.status !== 'pending' && !m.media?.viewOnce),
+        pins: await idb.getAll<Pin>('pins'),
+        aliases: getState().aliases,
+        files: [],
+      };
+      const { data, gz } = await gzip(new TextEncoder().encode(JSON.stringify(bundle)));
+      const framed = new Uint8Array(data.length + 1);
+      framed[0] = gz ? 1 : 0;
+      framed.set(data, 1);
+      const sealed = await aesSeal(await backupCryptoKey(raw), framed);
+      const { uploadUrl } = await api<{ uploadUrl: string }>('POST', '/api/backup/upload', { size: sealed.length });
+      const res = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream', 'x-upsert': 'true' }, body: sealed });
+      if (!res.ok) throw new Error('The backup could not be uploaded.');
+      const { updatedAt } = await api<{ updatedAt: number }>('POST', '/api/backup/done');
+      await idb.put('meta', updatedAt, BACKUP_AT);
+    } catch (err) {
+      backupDirty = true;
+      throw err;
+    }
+  })().finally(() => { backingUp = null; });
+  return backingUp;
+}
+
+/** After setting Haven up again: unlock the backup with the PIN and bring the chats back. */
+export async function restoreBackup(pin: string): Promise<number> {
+  const status = await backupStatus();
+  if (!status.enabled || !status.salt) throw new Error('There is no backup for this account.');
+  const { kek, auth } = await pinKeys(pin, fromB64u(status.salt));
+  const res = await api<{ wrapped: string; url: string | null }>('POST', '/api/backup/unlock', { auth });
+  let raw: Uint8Array<ArrayBuffer>;
+  try {
+    raw = await aesOpen(kek, fromB64u(res.wrapped));
+  } catch {
+    throw new Error('This backup could not be unlocked.');
+  }
+  let count = 0;
+  if (res.url) {
+    const download = await fetch(res.url);
+    if (!download.ok) throw new Error('The backup could not be downloaded. Try again.');
+    const framed = await aesOpen(await backupCryptoKey(raw), new Uint8Array(await download.arrayBuffer()));
+    const json = framed[0] === 1 ? await gunzip(framed.slice(1)) : framed.slice(1);
+    const bundle = JSON.parse(new TextDecoder().decode(json)) as HistoryBundle;
+    count = bundle.messages?.length ?? 0;
+    await importHistory(bundle);
+  }
+  await idb.put('meta', raw, BACKUP_KEY);
+  backupDirty = true;
+  runBackup(true).catch(() => {});
+  return count;
+}
+
+export async function turnOffBackup() {
+  await api('DELETE', '/api/backup');
+  await idb.del('meta', BACKUP_KEY);
+  await idb.del('meta', BACKUP_AT);
+}
+
+window.setInterval(() => { if (document.visibilityState === 'visible') runBackup().catch(() => {}); }, 3 * 60_000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') runBackup().catch(() => {}); });
 
 // ------------------------------------------------------------------ pinned messages & disappearing messages
 

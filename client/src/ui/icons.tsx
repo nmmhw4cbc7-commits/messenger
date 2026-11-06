@@ -198,3 +198,9 @@ export const Vibrate = (p: P) => (
     <path d="M4.5 8v8M19.5 8v8M2 10v4M22 10v4" />
   </I>
 );
+export const Cloud = (p: P) => (
+  <I {...p}>
+    <path d="M7 18.5h10a4 4 0 0 0 .6-7.95A5.5 5.5 0 0 0 7.1 9.6 4.5 4.5 0 0 0 7 18.5Z" />
+    <path d="M12 15.5v-5M9.8 12.6 12 10.4l2.2 2.2" />
+  </I>
+);

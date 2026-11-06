@@ -2929,3 +2929,9 @@ button.vlog-reaction:active { transform: scale(0.94); }
 .resend-actions { display: flex; align-items: center; gap: 14px; }
 .resend-actions .pill-button { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 16px; border: 0; font: inherit; font-size: 14.5px; font-weight: 600; }
 .resend-later { border: 0; background: none; color: var(--text-2); font: inherit; font-size: 14.5px; }
+
+/* Chat backup */
+.backup-sheet .sheet-content { gap: 14px; }
+.backup-pins { display: flex; flex-direction: column; gap: 10px; }
+.backup-pins .pin-input { text-align: center; }
+.backup-hint { margin: -4px 4px 4px; font-size: 13px; color: var(--text-2); text-align: center; }
