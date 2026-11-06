@@ -619,10 +619,15 @@ async function applyVote(targetId: string, userId: string, choices: number[]) {
   await updateMessage({ ...msg, votes });
 }
 
-/** A view-once photo was looked at: delete it everywhere and tell the sender. */
+/**
+ * A view-once photo was looked at: delete it from this device and tell the sender.
+ * In a direct chat the file is also deleted from the server. In a group the others may not
+ * have opened it yet, so the server copy stays (it is removed with the usual cleanup).
+ */
 export async function markOpened(msg: Msg) {
   if (msg.opened) return;
-  await forgetFile(msg.id, msg.media);
+  const direct = getState().convs[msg.convId]?.kind === 'direct';
+  await forgetFile(msg.id, direct ? msg.media : undefined);
   await updateMessage({ ...msg, opened: true, media: msg.media ? { ...msg.media, thumb: undefined } : undefined });
   sendPayload(msg.convId, { type: 'opened', target: msg.id }).catch(() => {});
 }

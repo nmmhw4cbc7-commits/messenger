@@ -1507,7 +1507,11 @@ route('POST', '/attachments/url', async ({ req, reply, body }) => {
   const { path } = shape<{ path: string }>(body, { path: [str(33, 81), true] });
   await enforce(`download:${user.id}`, 2000, HOUR);
   await attachmentConv(path, user.id);
-  const data = await storageCall('POST', `/object/sign/attachments/${path}`, { expiresIn: 600 });
+  // A file that was deleted (view-once opened, deleted for everyone, or expired) is a normal 404, not a server error.
+  const data = await storageCall('POST', `/object/sign/attachments/${path}`, { expiresIn: 600 }).catch((err) => {
+    if (String(err).includes('not_found') || String(err).includes('NoSuchKey')) throw new HttpError(404, 'file_gone', 'This file is no longer available.');
+    throw err;
+  });
   return { url: `${SUPABASE_URL}/storage/v1${data.signedURL ?? data.signedUrl}` };
 });
 
