@@ -47,7 +47,7 @@ export interface ReplyRef {
 }
 
 export interface SystemBody {
-  type: 'group_created' | 'members_added' | 'member_removed' | 'member_left' | 'renamed' | 'member_joined';
+  type: 'group_created' | 'members_added' | 'member_removed' | 'member_left' | 'renamed' | 'member_joined' | 'photo_changed' | 'photo_removed';
   actorId: string;
   targetIds?: string[];
   title?: string;
@@ -93,6 +93,8 @@ export interface Conv {
   members: Member[];
   /** The friend group for Vlog your Day. */
   circle?: boolean;
+  /** Group photo version (0 = none). */
+  avatarVersion?: number;
   // Device-only fields
   left: boolean;
   lastReadAt: number;

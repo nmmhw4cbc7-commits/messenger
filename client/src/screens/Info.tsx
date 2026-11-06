@@ -3,12 +3,15 @@ import { useStore, type Member } from '../lib/store';
 import {
   avatarUrl, convTitle, displayName, otherMember, clearChat, block, unblock, listBlocked, renameGroup, addMembers,
   removeMember, leaveGroup, setRole, openDirect, setVerified, myDevices, acceptKeyChange, setAlias,
+  groupAvatarUrl, setGroupPhoto, removeGroupPhoto,
 } from '../lib/engine';
+import { editAvatar } from '../ui/AvatarEditor';
+import { pickFile } from './Attachments';
 import { safetyNumber } from '../lib/crypto';
 import { prettyPhone } from '../lib/phone';
 import { Avatar, Button, Cell, Screen, Section, Spinner, Toggle, actionSheet, confirmAction, toast, useAsync } from '../ui/components';
 import { getNav, goBack, goBackMany, useNav } from '../ui/nav';
-import { Block, Key, PersonAdd, Pencil, Trash, Exit, Shield } from '../ui/icons';
+import { Block, Key, PersonAdd, Pencil, Trash, Exit, Shield, Camera } from '../ui/icons';
 import { PeoplePicker } from './NewChat';
 import { ChatScreen } from './Chat';
 import { usePresence } from '../ui/usePresence';
@@ -118,6 +121,7 @@ export function GroupInfo({ convId }: { convId: string }) {
   const conv = useStore((s) => s.convs[convId]);
   const me = useStore((s) => s.me);
   const [, run] = useAsync();
+  const [photoBusy, runPhoto] = useAsync();
   if (!conv || !me) return <Screen back title="Info"><div /></Screen>;
   const isAdmin = conv.myRole === 'admin' && !conv.left;
 
@@ -167,12 +171,33 @@ export function GroupInfo({ convId }: { convId: string }) {
     actionSheet(actions, { title: displayName(m) });
   };
 
+  const canEditPhoto = !conv.left && (isAdmin || Boolean(conv.circle));
+  const choosePhoto = async () => {
+    const file = await pickFile('image/*');
+    if (!file) return;
+    const blob = await editAvatar(file);
+    if (blob) runPhoto(() => setGroupPhoto(conv.id, blob));
+  };
+  const photoMenu = () => {
+    const src = groupAvatarUrl(conv);
+    const actions: { label: string; run: () => void; danger?: boolean }[] = [];
+    if (src) actions.push({ label: 'View photo', run: () => openPhoto(src, conv.title) });
+    if (canEditPhoto) actions.push({ label: src ? 'Choose new photo' : 'Choose photo', run: choosePhoto });
+    if (canEditPhoto && src) actions.push({ label: 'Remove photo', danger: true, run: () => runPhoto(() => removeGroupPhoto(conv.id)) });
+    if (!actions.length) return;
+    if (!src && canEditPhoto) { choosePhoto(); return; }
+    actionSheet(actions, { title: 'Group photo' });
+  };
+
   const sorted = [...conv.members].sort((a, b) => (a.id === me.id ? -1 : b.id === me.id ? 1 : (a.role === b.role ? displayName(a).localeCompare(displayName(b)) : a.role === 'admin' ? -1 : 1)));
 
   return (
     <Screen back title="" grouped>
       <div class="profile-hero">
-        <Avatar id={conv.id} name={conv.title} size={104} group />
+        <button class="avatar-picker" onClick={photoMenu} aria-label="Group photo" disabled={photoBusy}>
+          <Avatar id={conv.id} name={conv.title} src={groupAvatarUrl(conv)} size={104} group />
+          {canEditPhoto && <span class="avatar-picker-badge">{photoBusy ? <Spinner size={16} /> : <Camera size={18} />}</span>}
+        </button>
         <h1>{conv.title}</h1>
         <p class="hero-sub">{conv.left ? 'You are no longer a member' : `Group · ${conv.members.length} members`}</p>
       </div>

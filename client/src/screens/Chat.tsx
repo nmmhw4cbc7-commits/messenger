@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import type { JSX } from 'preact';
 import { useStore, type Conv, type Msg, type ReplyRef } from '../lib/store';
 import {
-  avatarUrl, convTitle, displayName, loadMessages, otherMember, sendText, sendTyping, typingLabel, setOpenConv, retry, deleteMessage, deleteForEveryone, editMessage, acceptKeyChange,
+  avatarUrl, chatAvatarUrl, convTitle, displayName, loadMessages, otherMember, sendText, sendTyping, typingLabel, setOpenConv, retry, deleteMessage, deleteForEveryone, editMessage, acceptKeyChange,
   react, isReadByAll, summarize,
 } from '../lib/engine';
 import { MediaView, LocationCard, ContactCard, PollCard, VoiceRecorder, openAttachSheet, Mic, Plus } from './Attachments';
@@ -82,7 +82,7 @@ export function ChatScreen({ convId }: { convId: string }) {
         <div class="navbar-row">
           <button class="nav-back" onClick={() => goBack()} aria-label="Back"><ChevronLeft size={26} /></button>
           <button class="chat-header" onClick={openInfo} aria-label={`${title}, show info`}>
-            <Avatar id={conv.kind === 'group' ? conv.id : other?.id ?? conv.id} name={title} src={other ? avatarUrl(other) : null} size={38} group={conv.kind === 'group'} />
+            <Avatar id={conv.kind === 'group' ? conv.id : other?.id ?? conv.id} name={title} src={chatAvatarUrl(conv, me.id)} size={38} group={conv.kind === 'group'} />
             <span class="chat-header-text">
               <span class="chat-header-title">{title}</span>
               <span class={`chat-header-sub${typingNow || presence === 'online' ? ' online' : ''}${typingNow ? ' typing' : ''}`}>{subtitle}</span>

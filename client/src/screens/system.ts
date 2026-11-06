@@ -28,6 +28,10 @@ export function describeSystem(m: Msg, conv: Conv, meId: string | undefined): st
       return `${actor} removed ${list(s.targetIds)}`;
     case 'member_left':
       return `${actor} left`;
+    case 'photo_changed':
+      return s.actorId === meId ? 'You changed the group photo' : `${actor} changed the group photo`;
+    case 'photo_removed':
+      return s.actorId === meId ? 'You removed the group photo' : `${actor} removed the group photo`;
     case 'member_joined':
       return s.actorId === meId ? 'You joined the group' : `${actor} joined with an invite link`;
     case 'renamed':

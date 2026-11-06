@@ -629,6 +629,7 @@ async function serializeConversations(convs: Row[], userId: string) {
       updatedAt: Number(c.updated_at),
       myRole: list.find((m) => m.id === userId)?.role ?? 'member',
       circle: Boolean(c.circle),
+      avatarVersion: Number(c.avatar_version ?? 0),
       // Read positions are only shared by people who keep read receipts on.
       members: list.map((m) => ({ ...publicProfile(m, devices.get(m.id) ?? []), role: m.role, lastReadAt: m.read_receipts ? Number(m.last_read_at) : 0 })),
     };
@@ -1385,6 +1386,61 @@ route('POST', '/conversations/:id/messages', async ({ req, reply, params, body }
     await broadcast([user.id], 'sync');
   }
   return { id: b.id, createdAt: t };
+});
+
+// ---- group photo (admins; in a friend group everyone). Only members can load it.
+
+async function canEditGroup(convId: string, userId: string) {
+  const conv = await membershipOrThrow(convId, userId);
+  if (conv.kind !== 'group') throw new HttpError(400, 'not_group');
+  if (conv.my_role !== 'admin' && !conv.circle) throw new HttpError(403, 'forbidden', 'Only admins can change the group photo.');
+  return conv;
+}
+
+route('PUT', '/conversations/:id/avatar', async ({ req, reply, params, raw }) => {
+  const user = await currentUser(req, reply);
+  const conv = await canEditGroup(params.id, user.id);
+  await enforce(`gavatar:${user.id}`, 20, HOUR);
+  if (req.headers.get('content-type') !== 'image/jpeg' || raw.length > MAX_AVATAR || !isJpeg(raw)) {
+    throw new HttpError(400, 'invalid_image', 'This picture could not be used.');
+  }
+  const t = now();
+  const members = await memberIds(conv.id);
+  await sql.begin(async (tx) => {
+    await tx`insert into haven.group_avatars (conversation_id, data, updated_at) values (${conv.id}, ${Buffer.from(raw)}, ${t})
+             on conflict (conversation_id) do update set data = excluded.data, updated_at = excluded.updated_at`;
+    await tx`update haven.conversations set avatar_version = ${t} where id = ${conv.id}`;
+    await systemEvent(tx, conv.id, { type: 'photo_changed', actorId: user.id, names: await namesOf(tx, [user.id]) }, members.filter((id) => id !== user.id));
+  });
+  await broadcast(members, 'conversations');
+  await broadcast(members.filter((id) => id !== user.id), 'sync');
+  return { conversation: await oneConversation(conv.id, user.id) };
+});
+
+route('DELETE', '/conversations/:id/avatar', async ({ req, reply, params }) => {
+  const user = await currentUser(req, reply);
+  const conv = await canEditGroup(params.id, user.id);
+  const members = await memberIds(conv.id);
+  await sql.begin(async (tx) => {
+    await tx`delete from haven.group_avatars where conversation_id = ${conv.id}`;
+    await tx`update haven.conversations set avatar_version = 0 where id = ${conv.id}`;
+    await systemEvent(tx, conv.id, { type: 'photo_removed', actorId: user.id, names: await namesOf(tx, [user.id]) }, members.filter((id) => id !== user.id));
+  });
+  await broadcast(members, 'conversations');
+  await broadcast(members.filter((id) => id !== user.id), 'sync');
+  return { conversation: await oneConversation(conv.id, user.id) };
+});
+
+route('GET', '/conversations/:id/avatar', async ({ req, reply, params }) => {
+  const user = await currentUser(req, reply);
+  await membershipOrThrow(params.id, user.id);
+  const [row] = await sql`select data from haven.group_avatars where conversation_id = ${params.id}`;
+  if (!row) throw new HttpError(404, 'not_found');
+  const headers = new Headers(reply.headers);
+  headers.set('Content-Type', 'image/jpeg');
+  headers.set('Cache-Control', 'private, max-age=31536000, immutable');
+  headers.set('Content-Security-Policy', "default-src 'none'; sandbox");
+  return new Response(row.data, { status: 200, headers });
 });
 
 // ---- typing indicator (a short-lived hint, nothing is stored)

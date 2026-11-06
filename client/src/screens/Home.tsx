@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { memo } from 'preact/compat';
 import { getState, useStore, type Conv, type Msg } from '../lib/store';
-import { avatarUrl, convTitle, displayName, otherMember, deleteChat, markRead, summarize, typingLabel } from '../lib/engine';
+import { chatAvatarUrl, convTitle, displayName, otherMember, deleteChat, markRead, summarize, typingLabel } from '../lib/engine';
 import { formatListTime } from '../lib/format';
 import { Avatar, Empty, NavButton, Screen, Spinner, actionSheet, confirmAction } from '../ui/components';
 import { Chats, Compose, Gear, Lock, Search, Clock, Alert, Check, Trash } from '../ui/icons';
@@ -263,7 +263,7 @@ function ChatRow({ conv, meId, onOpen }: { conv: Conv; meId?: string; onOpen: ()
         }}
         onContextMenu={(e) => { e.preventDefault(); menu(); }}
       >
-        <Avatar id={conv.kind === 'group' ? conv.id : other?.id ?? conv.id} name={title} src={other ? avatarUrl(other) : null} size={54} group={conv.kind === 'group'} />
+        <Avatar id={conv.kind === 'group' ? conv.id : other?.id ?? conv.id} name={title} src={chatAvatarUrl(conv, meId)} size={54} group={conv.kind === 'group'} />
         <span class="chat-row-main">
           <span class="chat-row-top">
             <span class="chat-row-title">{title}</span>

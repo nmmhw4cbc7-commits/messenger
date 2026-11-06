@@ -169,6 +169,26 @@ export function avatarUrl(p: { id: string; avatarVersion: number } | null | unde
   return p && p.avatarVersion ? `/api/avatars/${encodeURIComponent(p.id)}?v=${p.avatarVersion}` : null;
 }
 
+/** Group photo (only members can load it). */
+export function groupAvatarUrl(conv: Pick<Conv, 'id' | 'avatarVersion'> | null | undefined) {
+  return conv && conv.avatarVersion ? `/api/conversations/${encodeURIComponent(conv.id)}/avatar?v=${conv.avatarVersion}` : null;
+}
+
+/** Photo shown for a chat: the group photo, or the other person's profile photo. */
+export function chatAvatarUrl(conv: Conv, meId: string | undefined) {
+  return conv.kind === 'group' ? groupAvatarUrl(conv) : avatarUrl(otherMember(conv, meId));
+}
+
+export async function setGroupPhoto(convId: string, blob: Blob) {
+  const res = await api<{ conversation: ServerConv }>('PUT', `/api/conversations/${convId}/avatar`, blob);
+  await upsertServerConv(res.conversation);
+}
+
+export async function removeGroupPhoto(convId: string) {
+  const res = await api<{ conversation: ServerConv }>('DELETE', `/api/conversations/${convId}/avatar`);
+  await upsertServerConv(res.conversation);
+}
+
 export async function setTheme(theme: Theme) {
   applyTheme(theme);
   setState({ theme });
@@ -276,6 +296,7 @@ interface ServerConv {
   myRole: 'admin' | 'member';
   members: Member[];
   circle?: boolean;
+  avatarVersion?: number;
 }
 
 function mergeConv(server: ServerConv, local?: Conv): Conv {
