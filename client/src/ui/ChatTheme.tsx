@@ -31,7 +31,7 @@ function ThemeSheet({ conv, close }: { conv: Conv; close: () => Promise<void> })
     if (id === current) { close(); return; }
     setBusy(id);
     try {
-      await setChatTheme(conv.id, id);
+      await setChatTheme(conv.id, id, themeName(id));
       await close();
     } catch (err) {
       toast(err instanceof Error ? err.message : 'The theme could not be changed.', 'error');
