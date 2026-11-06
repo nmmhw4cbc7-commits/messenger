@@ -117,7 +117,12 @@ export type Payload =
   | { type: 'vote'; target: string; choices: number[] }
   | { type: 'opened'; target: string }
   | { type: 'edit'; target: string; text: string }
-  | { type: 'delete'; target: string };
+  | { type: 'delete'; target: string }
+  | { type: 'pin'; target: string; on: boolean }
+  | { type: 'timer'; seconds: number };
+
+/** Content payloads may carry a disappearing-message timer (seconds). */
+export type Timed<T> = T & { ttl?: number };
 
 const ID = /^[A-Za-z0-9_-]{16,40}$/;
 const B64 = /^[A-Za-z0-9_-]+$/;
@@ -152,8 +157,20 @@ function cleanMedia(m: unknown): MediaPayload | null {
   return out;
 }
 
+export const TIMER_CHOICES = [0, 3600, 86400, 604800];
+
 /** Accept only well-formed payloads; anything else is treated as corrupt. */
 function cleanPayload(p: unknown): Payload | null {
+  const out = cleanPayloadBody(p);
+  if (!out) return null;
+  const ttl = (p as Record<string, unknown>).ttl;
+  if (['text', 'media', 'location', 'contact', 'poll'].includes(out.type) && typeof ttl === 'number' && TIMER_CHOICES.includes(ttl) && ttl > 0) {
+    return { ...out, ttl } as unknown as Payload;
+  }
+  return out;
+}
+
+function cleanPayloadBody(p: unknown): Payload | null {
   if (!p || typeof p !== 'object') return null;
   const o = p as Record<string, unknown>;
   switch (o.type) {
@@ -191,6 +208,10 @@ function cleanPayload(p: unknown): Payload | null {
         ? { type: 'edit', target: o.target, text: o.text.slice(0, 8000) } : null;
     case 'delete':
       return typeof o.target === 'string' && ID.test(o.target) ? { type: 'delete', target: o.target } : null;
+    case 'pin':
+      return typeof o.target === 'string' && ID.test(o.target) && typeof o.on === 'boolean' ? { type: 'pin', target: o.target, on: o.on } : null;
+    case 'timer':
+      return typeof o.seconds === 'number' && TIMER_CHOICES.includes(o.seconds) ? { type: 'timer', seconds: o.seconds } : null;
     default:
       return null;
   }

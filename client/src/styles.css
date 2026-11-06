@@ -2887,3 +2887,37 @@ button.vlog-reaction:active { transform: scale(0.94); }
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0ms !important; transition-duration: 0.01ms !important; }
   .spinner { animation-duration: 0.8s !important; }
 }
+
+/* Voice messages: dot-matrix waveform */
+.voice-wave { gap: 1px; height: 24px; }
+.voice-wave span, .recorder-levels span {
+  min-width: 3px;
+  border-radius: 0;
+  background: radial-gradient(circle, currentColor 1.25px, transparent 1.55px) center top / 4px 4px repeat-y;
+  opacity: 0.3;
+  transition: opacity 0.12s steps(2);
+}
+.voice-wave span.on { opacity: 1; background-color: transparent; }
+.recorder-levels span { opacity: 0.9; color: var(--signal); }
+
+/* Pinned message bar */
+.pinned-bar { flex: none; display: flex; align-items: center; gap: 4px; margin: 6px 10px 0; padding: 0 4px 0 12px; border-radius: 16px; background: var(--bg-elevated); box-shadow: inset 0 0 0 1px var(--line); animation: rise-in 0.3s var(--snap) both; }
+.pinned-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 9px 0; border: 0; background: none; color: var(--text); text-align: left; font: inherit; }
+.pinned-main > svg { flex: none; color: var(--signal); }
+.pinned-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.pinned-text strong { font-family: var(--mono); font-size: 10px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-2); }
+.pinned-text span { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pinned-close { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 50%; background: none; color: var(--text-2); }
+
+/* Disappearing messages chip */
+.timer-chip { flex: none; align-self: center; display: inline-flex; align-items: center; gap: 6px; margin: 6px auto 0; padding: 4px 10px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--sep); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); background: var(--bg-chat); }
+
+/* App icon picker */
+.icon-options { display: flex; gap: 14px; padding: 4px 0 2px; }
+.icon-option { display: flex; flex-direction: column; align-items: center; gap: 6px; border: 0; background: none; padding: 0; color: var(--text-2); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; }
+.icon-option img { display: block; border-radius: 13px; box-shadow: 0 0 0 1px var(--line); }
+.icon-option.on img { box-shadow: 0 0 0 2px var(--bg-elevated), 0 0 0 4px var(--signal); }
+.icon-option.on { color: var(--text); }
+.icon-option span { display: inline-flex; align-items: center; gap: 3px; }
+.icon-option span svg { color: var(--signal); }
+.cell-icon-img { border-radius: 4px; }

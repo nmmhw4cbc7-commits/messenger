@@ -32,6 +32,12 @@ export function describeSystem(m: Msg, conv: Conv, meId: string | undefined): st
       return s.actorId === meId ? 'You changed the group photo' : `${actor} changed the group photo`;
     case 'photo_removed':
       return s.actorId === meId ? 'You removed the group photo' : `${actor} removed the group photo`;
+    case 'pinned':
+      return `${actor} pinned a message`;
+    case 'unpinned':
+      return `${actor} unpinned a message`;
+    case 'timer_changed':
+      return s.title === 'off' ? `${actor} turned off disappearing messages` : `${actor} turned on disappearing messages (${s.title})`;
     case 'theme_changed':
       return s.actorId === meId ? `You changed the chat theme to “${s.title}”` : `${actor} changed the chat theme to “${s.title}”`;
     case 'member_joined':

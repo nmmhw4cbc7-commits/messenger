@@ -180,3 +180,21 @@ export const Palette = (p: P) => (
     <circle cx="15" cy="7.8" r="1" />
   </I>
 );
+export const Pin = (p: P) => (
+  <I {...p}>
+    <path d="M9 4h6l-1 5 3 3v2H7v-2l3-3-1-5Z" />
+    <path d="M12 14v6" />
+  </I>
+);
+export const Timer = (p: P) => (
+  <I {...p}>
+    <circle cx="12" cy="13" r="7.5" stroke-dasharray="3 2.2" />
+    <path d="M12 9v4l2.5 2M10 3h4" />
+  </I>
+);
+export const Vibrate = (p: P) => (
+  <I {...p}>
+    <rect x="8" y="4" width="8" height="16" rx="2" />
+    <path d="M4.5 8v8M19.5 8v8M2 10v4M22 10v4" />
+  </I>
+);

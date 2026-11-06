@@ -1,6 +1,8 @@
 import { render } from 'preact';
 import { App } from './app';
 import { boot } from './lib/engine';
+import './lib/haptics';
+import { applyAppIcon } from './lib/appIcon';
 import './styles.css';
 
 // Keep the app exactly as tall as the visible area, also while the on-screen
@@ -86,4 +88,5 @@ window.addEventListener('error', (e) => setTimeout(() => showStartupError(e.erro
 window.addEventListener('unhandledrejection', (e) => setTimeout(() => showStartupError(e.reason), 0));
 
 render(<App />, document.getElementById('app')!);
+applyAppIcon();
 boot().catch((err) => showStartupError(err));
