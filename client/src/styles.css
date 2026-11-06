@@ -2921,3 +2921,11 @@ button.vlog-reaction:active { transform: scale(0.94); }
 .icon-option span { display: inline-flex; align-items: center; gap: 3px; }
 .icon-option span svg { color: var(--signal); }
 .cell-icon-img { border-radius: 4px; }
+
+/* "X set up Haven again" offer */
+.resend-offer { flex: none; margin: 8px 10px 0; padding: 14px 16px; border-radius: 20px; background: var(--bg-elevated); box-shadow: inset 0 0 0 1.5px var(--signal); display: flex; flex-direction: column; gap: 10px; animation: rise-in 0.3s var(--snap) both; }
+.tab-pane .resend-offer { margin: 0 16px 16px; }
+.resend-offer p { margin: 0; font-size: 14.5px; line-height: 1.45; color: var(--text); }
+.resend-actions { display: flex; align-items: center; gap: 14px; }
+.resend-actions .pill-button { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 16px; border: 0; font: inherit; font-size: 14.5px; font-weight: 600; }
+.resend-later { border: 0; background: none; color: var(--text-2); font: inherit; font-size: 14.5px; }
