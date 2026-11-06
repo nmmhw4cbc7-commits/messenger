@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { pickEmoji } from '../ui/EmojiPicker';
+import { ResendOffer } from '../ui/ResendOffer';
 import { getState, useStore, type Activity, type Conv, type Member, type Msg } from '../lib/store';
 import {
   addMembers, avatarUrl, createCircle, createCircleInvite, deleteForEveryone, displayName, formatDuration, joinCircle, loadMessages, markActivitySeen,
@@ -116,6 +117,7 @@ export function TodayTab() {
   return (
     <Screen title="Vlog your Day" large>
       <TopLine today={today} />
+      <ResendOffer conv={conv} />
 
       {!pick ? (
         <div class="vlog-card">

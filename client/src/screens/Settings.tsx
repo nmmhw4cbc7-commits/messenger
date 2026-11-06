@@ -26,7 +26,7 @@ export function SettingsTab() {
     if (v === icon) return;
     setAppIcon(v);
     setIcon(v);
-    toast('Icon changed. On iPhone, add Haven to your Home Screen again to see it.');
+    toast('Icon saved. On iPhone it appears with the next install. Don’t remove Haven just for this: that deletes the chats on this phone.');
   };
 
   return (

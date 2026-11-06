@@ -1389,6 +1389,43 @@ route('POST', '/conversations/:id/messages', async ({ req, reply, params, body }
   return { id: b.id, createdAt: t };
 });
 
+// ---- history re-delivery: someone set Haven up again (new keys, empty phone).
+// Each sender's own device can send its messages again, end-to-end encrypted for
+// that person's current devices only. The original time is kept, and nothing
+// is re-sent from before the person joined the chat. Devices that still have a
+// message ignore the copy (same id).
+
+route('POST', '/conversations/:id/redeliver', async ({ req, reply, params, body }) => {
+  const user = await currentUser(req, reply);
+  const b = shape<{ id: string; envelope: Row; userId: string; createdAt: number }>(body, {
+    id: [isId, true], envelope: [validEnvelope, true], userId: [isId, true], createdAt: [int(0), true],
+  });
+  await enforce(`redeliver:${user.id}`, 3000, HOUR);
+  const conv = await membershipOrThrow(params.id, user.id);
+  if (b.userId === user.id) throw new HttpError(400, 'is_self');
+  const t = now();
+  if (b.createdAt > t || b.createdAt < t - RETENTION_DAYS * DAY) throw new HttpError(400, 'too_old', 'This message is too old to send again.');
+  const [member] = await sql`select joined_at from haven.members where conversation_id = ${conv.id} and user_id = ${b.userId}`;
+  if (!member) throw new HttpError(404, 'not_member');
+  if (Number(member.joined_at) > b.createdAt) return { ok: false, reason: 'before_joined' };
+  if (await hasBlocked(b.userId, user.id)) return { ok: false, reason: 'blocked' };
+  const devices = (await sql`select id from haven.devices where user_id = ${b.userId}`).map((d) => d.id as string);
+  const given = Object.keys(b.envelope.keys as Row);
+  if (!devices.length || given.length !== devices.length || given.some((id) => !devices.includes(id))) {
+    throw new HttpError(409, 'devices_changed', 'The devices in this chat changed.');
+  }
+  // The original is still queued for someone else: the copy needs its own id.
+  const [existing] = await sql`select 1 from haven.messages where id = ${b.id}`;
+  if (existing) return { ok: false, reason: 'exists' };
+  await sql.begin(async (tx) => {
+    const [m] = await tx`insert into haven.messages (id, conversation_id, sender_id, kind, body, created_at)
+                         values (${b.id}, ${conv.id}, ${user.id}, 'msg', ${JSON.stringify(b.envelope)}, ${b.createdAt}) returning seq`;
+    await tx`insert into haven.message_recipients (seq, device_id) select ${m.seq}, unnest(${devices}::text[]) on conflict do nothing`;
+  });
+  await broadcast([b.userId], 'sync');
+  return { ok: true };
+});
+
 // ---- group photo (admins; in a friend group everyone). Only members can load it.
 
 async function canEditGroup(convId: string, userId: string) {

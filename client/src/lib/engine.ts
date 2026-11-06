@@ -1565,6 +1565,66 @@ export async function deleteForEveryone(msg: Msg) {
   if (path) api('POST', '/api/attachments/delete', { path }).catch(() => {});
 }
 
+// ------------------------------------------------------------------ history re-delivery
+//
+// Messages live only on phones. If a friend sets Haven up again (new phone, or
+// the app was removed), their history is gone. Everyone else can send their
+// own messages from the last 30 days again, encrypted for that friend's new
+// devices only. The friend's devices skip anything they already have (same id).
+
+const RESEND_DAYS = 29;
+const RESEND_KEY = 'resendHandled';
+
+/** People in this chat who set Haven up again recently and have not been sent their history yet. */
+export function resendCandidates(conv: Conv, list: Msg[] | undefined, handled: Record<string, string>): Member[] {
+  const me = getState().me;
+  if (!me || conv.left || !list) return [];
+  const since = Date.now() - 7 * 24 * 3600_000;
+  const pins = getState().pins;
+  const ids = new Set(list.filter((m) => m.kind === 'notice' && m.notice?.type === 'key_changed' && m.createdAt > since).map((m) => m.notice!.userId));
+  return conv.members.filter((m) => ids.has(m.id) && m.id !== me.id && pins[m.id] && handled[m.id] !== pins[m.id].fp && (m.devices?.length ?? 0) > 0);
+}
+
+export async function loadResendHandled(): Promise<Record<string, string>> {
+  return (await idb.get<Record<string, string>>('meta', RESEND_KEY).catch(() => undefined)) ?? {};
+}
+
+export async function dismissResend(userId: string) {
+  const handled = await loadResendHandled();
+  const fp = getState().pins[userId]?.fp;
+  if (fp) await idb.put('meta', { ...handled, [userId]: fp }, RESEND_KEY);
+}
+
+/** Send my own messages of the last 30 days (all shared chats) again to this person's current devices. */
+export async function resendHistoryTo(userId: string, onProgress?: (n: number) => void): Promise<number> {
+  const me = getState().me;
+  if (!me || !identity) throw new Error('You are offline.');
+  await refreshConversations().catch(() => {});
+  const cutoff = Date.now() - RESEND_DAYS * 24 * 3600_000;
+  let sent = 0;
+  for (const conv of Object.values(getState().convs)) {
+    const member = conv.members.find((m) => m.id === userId);
+    if (conv.left || !member?.devices?.length) continue;
+    const recipients = member.devices.map((d) => ({ id: d.id, encPub: d.encPub, keyVersion: 1 }));
+    const list = await idb.messagesOf<Msg>(conv.id);
+    for (const m of list) {
+      if (m.senderId !== me.id || m.status !== 'sent' || m.deleted || m.createdAt < cutoff) continue;
+      if (!['text', 'media', 'location', 'contact', 'poll'].includes(m.kind)) continue;
+      if (m.media && (!m.media.path || m.media.viewOnce)) continue;
+      if (m.ttl && m.createdAt + m.ttl * 1000 < Date.now()) continue;
+      const payload = payloadOf(m);
+      for (const id of [m.id, `${m.id}-r`]) {
+        const envelope = await encryptMessage(identity, me.id, conv.id, id, payload, recipients);
+        const res = await api<{ ok: boolean; reason?: string }>('POST', `/api/conversations/${conv.id}/redeliver`, { id, envelope, userId, createdAt: m.createdAt });
+        if (res.ok) { sent++; onProgress?.(sent); break; }
+        if (res.reason !== 'exists') break;
+      }
+    }
+  }
+  await dismissResend(userId);
+  return sent;
+}
+
 // ------------------------------------------------------------------ pinned messages & disappearing messages
 
 const TIMER_LABEL: Record<number, string> = { 0: 'off', 3600: '1 hour', 86400: '24 hours', 604800: '7 days' };
