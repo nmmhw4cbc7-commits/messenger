@@ -2145,7 +2145,6 @@ button.plain-row:active { background: var(--press); transition: none; }
   background: var(--bg-cell);
   box-shadow: inset 0 0 0 0.5px var(--sep);
 }
-.recorder-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--signal); animation: blink 1s steps(1) infinite; flex: none; }
 .recorder-time { font-family: var(--mono); font-size: 13px; flex: none; }
 .recorder-levels { flex: 1; display: flex; align-items: center; justify-content: flex-end; gap: 2px; overflow: hidden; height: 26px; }
 .recorder-levels span { width: 3px; border-radius: 2px; background: var(--ink); flex: none; }
@@ -2368,8 +2367,6 @@ button.plain-row:active { background: var(--press); transition: none; }
 .vlog-card-title { margin: 2px 0 0; font-size: 24px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
 .vlog-card-text { margin: 0; font-size: 15px; line-height: 1.45; color: var(--text-2); }
 .vlog-card-hint { margin: 2px 0 0; font-size: 13px; color: var(--text-3); }
-.live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--signal); box-shadow: 0 0 0 3px rgba(255, 90, 31, 0.2); animation: live-pulse 1.8s ease-in-out infinite; }
-@keyframes live-pulse { 50% { box-shadow: 0 0 0 6px rgba(255, 90, 31, 0); } }
 .vlog-meter { display: flex; gap: 5px; }
 .vlog-meter span { flex: 1; height: 4px; border-radius: 2px; background: rgba(248, 247, 243, 0.18); }
 .vlog-meter span.on { background: var(--signal); }

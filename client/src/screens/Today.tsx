@@ -130,7 +130,7 @@ export function TodayTab() {
           <div class="vlog-card-person">
             <Avatar id={picked?.id ?? pick.userId} name={displayName(picked)} src={picked ? avatarUrl(picked) : null} size={56} />
             <div>
-              <p class="vlog-card-label"><span class="live-dot" />Today it’s</p>
+              <p class="vlog-card-label">Today it’s</p>
               <h2 class="vlog-card-title">{displayName(picked) || 'A friend'}</h2>
             </div>
           </div>
@@ -229,7 +229,7 @@ function MyTurn({ conv, today, posts }: { conv: Conv; today: string; posts: Msg[
 
   return (
     <div class="vlog-card mine">
-      <p class="vlog-card-label"><span class="live-dot" />Today it’s you</p>
+      <p class="vlog-card-label">Today it’s you</p>
       <h2 class="vlog-card-title">{done ? 'Your day is vlogged' : 'Vlog your day'}</h2>
       <p class="vlog-card-text">
         {done ? 'Thanks for sharing. Your friends can follow your day now.'

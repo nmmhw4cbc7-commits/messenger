@@ -532,7 +532,6 @@ export function VoiceRecorder({ convId, onDone }: { convId: string; onDone: () =
     <div class="composer recorder">
       <button class="recorder-cancel" onClick={() => { rec.current?.cancel(); rec.current = null; onDone(); }} aria-label="Cancel recording"><Trash size={20} /></button>
       <div class="recorder-body">
-        <span class="recorder-dot" />
         <span class="recorder-time">{formatDuration(seconds)}</span>
         <span class="recorder-levels" aria-hidden="true">
           {levels.map((v, i) => <span key={i} style={{ height: `${Math.round(3 + v * 22)}px` }} />)}
