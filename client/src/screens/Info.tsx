@@ -9,9 +9,10 @@ import { editAvatar } from '../ui/AvatarEditor';
 import { pickFile } from './Attachments';
 import { safetyNumber } from '../lib/crypto';
 import { prettyPhone } from '../lib/phone';
+import { openThemePicker, themeName } from '../ui/ChatTheme';
 import { Avatar, Button, Cell, Screen, Section, Spinner, Toggle, actionSheet, confirmAction, toast, useAsync } from '../ui/components';
 import { getNav, goBack, goBackMany, useNav } from '../ui/nav';
-import { Block, Key, PersonAdd, Pencil, Trash, Exit, Shield, Camera } from '../ui/icons';
+import { Block, Key, PersonAdd, Pencil, Trash, Exit, Shield, Camera, Palette } from '../ui/icons';
 import { PeoplePicker } from './NewChat';
 import { ChatScreen } from './Chat';
 import { usePresence } from '../ui/usePresence';
@@ -84,6 +85,12 @@ export function ContactInfo({ convId }: { convId: string }) {
       {other && (
         <Section footer="Compare safety numbers in person or on a call to make sure no one is listening in.">
           <Cell icon={<Key size={20} />} iconBg="ink" title="Safety number" right={<VerifiedLabel userId={other.id} />} chevron onClick={() => nav.push(<SafetyNumberScreen userId={other.id} />)} />
+        </Section>
+      )}
+
+      {!conv.left && (
+        <Section>
+          <Cell icon={<Palette size={20} />} title="Chat theme" value={themeName(conv.theme)} chevron onClick={() => openThemePicker(conv)} />
         </Section>
       )}
 
@@ -205,6 +212,12 @@ export function GroupInfo({ convId }: { convId: string }) {
       {isAdmin && (
         <Section>
           <Cell icon={<Pencil size={20} />} title="Change group name" onClick={rename} />
+        </Section>
+      )}
+
+      {!conv.left && (
+        <Section>
+          <Cell icon={<Palette size={20} />} title="Chat theme" value={themeName(conv.theme)} chevron onClick={() => openThemePicker(conv)} />
         </Section>
       )}
 

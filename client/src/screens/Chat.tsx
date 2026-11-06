@@ -77,7 +77,7 @@ export function ChatScreen({ convId }: { convId: string }) {
   const nameOf = (id: string) => (id === me.id ? 'You' : displayName(conv.members.find((m) => m.id === id)));
 
   return (
-    <div class="screen chat-screen">
+    <div class="screen chat-screen" data-chat-theme={conv.theme || undefined}>
       <header class="navbar chat-navbar scrolled">
         <div class="navbar-row">
           <button class="nav-back" onClick={() => goBack()} aria-label="Back"><ChevronLeft size={26} /></button>

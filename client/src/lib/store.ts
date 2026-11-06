@@ -47,7 +47,7 @@ export interface ReplyRef {
 }
 
 export interface SystemBody {
-  type: 'group_created' | 'members_added' | 'member_removed' | 'member_left' | 'renamed' | 'member_joined' | 'photo_changed' | 'photo_removed';
+  type: 'group_created' | 'members_added' | 'member_removed' | 'member_left' | 'renamed' | 'member_joined' | 'photo_changed' | 'photo_removed' | 'theme_changed';
   actorId: string;
   targetIds?: string[];
   title?: string;
@@ -95,6 +95,8 @@ export interface Conv {
   circle?: boolean;
   /** Group photo version (0 = none). */
   avatarVersion?: number;
+  /** Chat theme id ('' = standard), shared by everyone in the chat. */
+  theme?: string;
   // Device-only fields
   left: boolean;
   lastReadAt: number;

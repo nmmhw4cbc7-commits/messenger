@@ -189,6 +189,11 @@ export async function removeGroupPhoto(convId: string) {
   await upsertServerConv(res.conversation);
 }
 
+export async function setChatTheme(convId: string, theme: string) {
+  const res = await api<{ conversation: ServerConv }>('PUT', `/api/conversations/${convId}/theme`, { theme });
+  await upsertServerConv(res.conversation);
+}
+
 export async function setTheme(theme: Theme) {
   applyTheme(theme);
   setState({ theme });
@@ -297,6 +302,7 @@ interface ServerConv {
   members: Member[];
   circle?: boolean;
   avatarVersion?: number;
+  theme?: string;
 }
 
 function mergeConv(server: ServerConv, local?: Conv): Conv {

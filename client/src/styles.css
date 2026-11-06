@@ -2654,3 +2654,120 @@ button.vlog-reaction:active { transform: scale(0.94); }
 .e2e-note svg, .system-line.notice button svg { color: var(--text-2); }
 .vlog-friend-add { border-style: dotted; border-width: 2px; }
 .vlog-item::before { border-radius: 1px; }
+
+/* Today card: the name in typewriter type; the dot-grid corner stays */
+.vlog-card-title { font-family: var(--mono); font-weight: 500; font-size: 30px; line-height: 1.1; letter-spacing: -0.02em; text-transform: none; margin-top: 4px; }
+
+/* ------------------------------------------------------------------ Chat themes
+   Set on the chat screen and on the previews in the picker. Each theme only
+   redefines tokens (plus a wallpaper pattern), so everything inside follows. */
+[data-chat-theme="dots"] {
+  --chat-pattern: radial-gradient(circle, var(--dot-color) 1.1px, transparent 1.5px);
+  --chat-pattern-size: 11px 11px;
+}
+[data-chat-theme="red"] {
+  --bubble-out: #d71921;
+  --bubble-out-text: #ffffff;
+  --bubble-out-meta: rgba(255, 255, 255, 0.72);
+  --chat-pattern: radial-gradient(circle, rgba(215, 25, 33, 0.14) 1px, transparent 1.4px);
+  --chat-pattern-size: 14px 14px;
+}
+[data-chat-theme="type"] {
+  --bg-chat: #eeebe2;
+  --bubble-in: #faf8f1;
+  --bubble-out: #1c1b17;
+  --bubble-out-text: #f4f1e8;
+  --bubble-out-meta: rgba(244, 241, 232, 0.55);
+  --chat-pattern: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.045) 0 1px, transparent 1px 28px);
+  --chat-pattern-size: auto;
+}
+:root[data-theme="dark"] [data-chat-theme="type"] {
+  --bg-chat: #15140f;
+  --bubble-in: #211f18;
+  --bubble-out: #eeebe2;
+  --bubble-out-text: #15140f;
+  --bubble-out-meta: rgba(21, 20, 15, 0.5);
+  --chat-pattern: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.04) 0 1px, transparent 1px 28px);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) [data-chat-theme="type"] {
+    --bg-chat: #15140f;
+    --bubble-in: #211f18;
+    --bubble-out: #eeebe2;
+    --bubble-out-text: #15140f;
+    --bubble-out-meta: rgba(21, 20, 15, 0.5);
+    --chat-pattern: repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.04) 0 1px, transparent 1px 28px);
+  }
+}
+[data-chat-theme="type"] .bubble-text, [data-chat-theme="type"] .tp-bubble { font-family: var(--mono); font-size: 0.92em; letter-spacing: -0.01em; }
+[data-chat-theme="type"] .tp-bubble { font-size: 11.5px; }
+[data-chat-theme="clear"] {
+  --bubble-in: transparent;
+  --bubble-out: transparent;
+  --bubble-out-text: var(--text);
+  --bubble-out-meta: var(--text-2);
+  --bubble-shadow: inset 0 0 0 1px var(--sep);
+  --chat-pattern: radial-gradient(circle, var(--dot-color) 1px, transparent 1.4px);
+  --chat-pattern-size: 9px 9px;
+}
+[data-chat-theme="clear"] .out .bubble, [data-chat-theme="clear"] .tp-out { box-shadow: inset 0 0 0 1.5px var(--text); }
+[data-chat-theme="clear"] .bubble { -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+[data-chat-theme="glyph"] {
+  --bg-chat: #000000;
+  --bar: rgba(0, 0, 0, 0.88);
+  --bg-cell: #111111;
+  --bg-elevated: #111111;
+  --fill: rgba(255, 255, 255, 0.08);
+  --fill-strong: rgba(255, 255, 255, 0.15);
+  --press: rgba(255, 255, 255, 0.07);
+  --text: #ffffff;
+  --text-2: #8e8e8e;
+  --text-3: #555555;
+  --sep: rgba(255, 255, 255, 0.14);
+  --line: rgba(255, 255, 255, 0.08);
+  --ink: #ffffff;
+  --on-ink: #000000;
+  --accent-text: #ffffff;
+  --bubble-in: #161616;
+  --bubble-out: #ffffff;
+  --bubble-out-text: #000000;
+  --bubble-out-meta: rgba(0, 0, 0, 0.5);
+  --bubble-shadow: none;
+  --dot-color: rgba(255, 255, 255, 0.2);
+  --chat-pattern: radial-gradient(circle, rgba(255, 255, 255, 0.2) 1.3px, transparent 1.8px);
+  --chat-pattern-size: 16px 16px;
+  color-scheme: dark;
+  color: var(--text);
+}
+[data-chat-theme="orange"] {
+  --bubble-out: #ff6a13;
+  --bubble-out-text: #000000;
+  --bubble-out-meta: rgba(0, 0, 0, 0.55);
+}
+.chat-screen[data-chat-theme], .theme-preview {
+  background-color: var(--bg-chat);
+  background-image: var(--chat-pattern, none);
+  background-size: var(--chat-pattern-size, auto);
+}
+
+/* Theme picker */
+.theme-note { margin: 0 4px 14px; font-size: 14px; color: var(--text-2); }
+.theme-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding-bottom: 20px; }
+.theme-tile { display: flex; flex-direction: column; gap: 8px; padding: 0; border: 0; background: none; color: var(--text); text-align: left; }
+.theme-tile:active { transform: scale(0.97); }
+.theme-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 128px;
+  padding: 12px 10px;
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.theme-tile.on .theme-preview { box-shadow: 0 0 0 2px var(--signal); }
+.tp-bubble { max-width: 82%; padding: 6px 10px; border-radius: 14px; font-size: 12px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tp-in { align-self: flex-start; background: var(--bubble-in); color: var(--text); box-shadow: var(--bubble-shadow); }
+.tp-out { align-self: flex-end; background: var(--bubble-out); color: var(--bubble-out-text); }
+.theme-name { display: inline-flex; align-items: center; gap: 5px; padding-left: 4px; font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.1em; text-transform: uppercase; }
+.theme-name svg { color: var(--signal); }

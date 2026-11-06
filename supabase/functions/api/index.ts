@@ -630,6 +630,7 @@ async function serializeConversations(convs: Row[], userId: string) {
       myRole: list.find((m) => m.id === userId)?.role ?? 'member',
       circle: Boolean(c.circle),
       avatarVersion: Number(c.avatar_version ?? 0),
+      theme: String(c.theme ?? ''),
       // Read positions are only shared by people who keep read receipts on.
       members: list.map((m) => ({ ...publicProfile(m, devices.get(m.id) ?? []), role: m.role, lastReadAt: m.read_receipts ? Number(m.last_read_at) : 0 })),
     };
@@ -1441,6 +1442,26 @@ route('GET', '/conversations/:id/avatar', async ({ req, reply, params }) => {
   headers.set('Cache-Control', 'private, max-age=31536000, immutable');
   headers.set('Content-Security-Policy', "default-src 'none'; sandbox");
   return new Response(row.data, { status: 200, headers });
+});
+
+// ---- chat theme (any member; everyone in the chat sees the same one)
+
+const CHAT_THEMES: Record<string, string> = { '': 'Standard', dots: 'Dot Grid', red: 'Red', type: 'Typewriter', clear: 'Transparent', glyph: 'Glyph', orange: 'Orange' };
+
+route('PUT', '/conversations/:id/theme', async ({ req, reply, params, body }) => {
+  const user = await currentUser(req, reply);
+  const conv = await membershipOrThrow(params.id, user.id);
+  await enforce(`theme:${user.id}`, 30, HOUR);
+  const { theme } = shape<{ theme: string }>(body, { theme: [(v) => typeof v === 'string' && Object.hasOwn(CHAT_THEMES, v), true] });
+  if ((conv.theme ?? '') === theme) return { conversation: await oneConversation(conv.id, user.id) };
+  const members = await memberIds(conv.id);
+  await sql.begin(async (tx) => {
+    await tx`update haven.conversations set theme = ${theme} where id = ${conv.id}`;
+    await systemEvent(tx, conv.id, { type: 'theme_changed', actorId: user.id, title: CHAT_THEMES[theme], names: await namesOf(tx, [user.id]) }, members.filter((id) => id !== user.id));
+  });
+  await broadcast(members, 'conversations');
+  await broadcast(members.filter((id) => id !== user.id), 'sync');
+  return { conversation: await oneConversation(conv.id, user.id) };
 });
 
 // ---- typing indicator (a short-lived hint, nothing is stored)

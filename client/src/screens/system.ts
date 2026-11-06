@@ -32,6 +32,8 @@ export function describeSystem(m: Msg, conv: Conv, meId: string | undefined): st
       return s.actorId === meId ? 'You changed the group photo' : `${actor} changed the group photo`;
     case 'photo_removed':
       return s.actorId === meId ? 'You removed the group photo' : `${actor} removed the group photo`;
+    case 'theme_changed':
+      return s.actorId === meId ? `You changed the chat theme to “${s.title}”` : `${actor} changed the chat theme to “${s.title}”`;
     case 'member_joined':
       return s.actorId === meId ? 'You joined the group' : `${actor} joined with an invite link`;
     case 'renamed':
