@@ -337,14 +337,37 @@ function Timeline({ posts }: { posts: Msg[] }) {
   );
 }
 
-const QUICK = ['❤️', '🔥', '😂', '😮', '👏'];
 
 /** React right on the post; the person who posted it gets a notification. */
+/** The first emoji in what was typed (works with skin tones, flags and joined emoji). */
+function firstEmoji(text: string): string | null {
+  const parts = typeof Intl !== 'undefined' && 'Segmenter' in Intl
+    ? [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)].map((x) => x.segment)
+    : [...text];
+  const hit = parts.find((g) => /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(g));
+  return hit && hit.length <= 16 ? hit : null;
+}
+
+/** Dashed smiley with a plus: "add a reaction". */
+function AddReactionIcon() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+      <circle cx="11.5" cy="14" r="8.5" stroke-dasharray="2.6 2.4" />
+      <circle cx="8.6" cy="12.4" r="0.6" fill="currentColor" />
+      <circle cx="14.4" cy="12.4" r="0.6" fill="currentColor" />
+      <path d="M8.3 16.2c.8 1 1.9 1.6 3.2 1.6s2.4-.6 3.2-1.6" />
+      <path d="M21 2.5v6M18 5.5h6" stroke-width="1.8" />
+    </svg>
+  );
+}
+
 function Reactions({ msg }: { msg: Msg }) {
   const meId = useStore((s) => s.me?.id);
   const conv = useStore((s) => s.convs[msg.convId]);
+  const input = useRef<HTMLInputElement>(null);
+  const [picking, setPicking] = useState(false);
   const mine = msg.senderId === meId;
-  const entries = Object.entries(msg.reactions ?? {});
+  const entries = Object.entries(msg.reactions ?? {}).filter(([, e]) => e);
   const counts = new Map<string, number>();
   for (const [, e] of entries) counts.set(e, (counts.get(e) ?? 0) + 1);
   const myEmoji = meId ? msg.reactions?.[meId] : undefined;
@@ -360,14 +383,48 @@ function Reactions({ msg }: { msg: Msg }) {
       </div>
     );
   }
+  // Focus right in the tap so the keyboard opens; any emoji from it becomes the reaction.
+  const openPicker = () => {
+    const el = input.current;
+    if (!el) return;
+    el.value = '';
+    el.focus();
+  };
+  const onInput = () => {
+    const el = input.current;
+    if (!el) return;
+    const emoji = firstEmoji(el.value);
+    if (!emoji) { el.value = ''; return; }
+    el.value = '';
+    el.blur();
+    if (myEmoji !== emoji) tap(emoji);
+  };
   return (
     <div class="vlog-reactions">
-      {QUICK.map((emoji) => (
+      {[...counts].map(([emoji, n]) => (
         <button key={emoji} class={`vlog-reaction${myEmoji === emoji ? ' on' : ''}`} onClick={() => tap(emoji)}
-          aria-pressed={myEmoji === emoji} aria-label={`React ${emoji}`} title={counts.get(emoji) ? names(emoji) : undefined}>
-          {emoji}{counts.get(emoji) ? <em>{counts.get(emoji)}</em> : null}
+          aria-pressed={myEmoji === emoji} aria-label={`React ${emoji}`} title={names(emoji)}>
+          {emoji}<em>{n}</em>
         </button>
       ))}
+      <button class={`vlog-react-add${picking ? ' picking' : ''}`} onClick={openPicker} aria-label="Add a reaction">
+        <AddReactionIcon />
+        {picking && <span class="vlog-react-hint">Pick an emoji</span>}
+      </button>
+      <input
+        ref={input}
+        class="vlog-emoji-input"
+        type="text"
+        inputMode="text"
+        enterKeyHint="done"
+        autoComplete="off"
+        autoCorrect="off"
+        aria-label="Reaction emoji"
+        onFocus={() => setPicking(true)}
+        onBlur={() => setPicking(false)}
+        onInput={onInput}
+        onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+      />
     </div>
   );
 }
