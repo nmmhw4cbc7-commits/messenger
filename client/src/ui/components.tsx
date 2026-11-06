@@ -172,7 +172,17 @@ export function Segmented<T extends string>({ value, options, onChange }: { valu
 }
 
 export function Spinner({ size = 20 }: { size?: number }) {
-  return <span class="spinner" style={{ width: `${size}px`, height: `${size}px` }} role="progressbar" aria-label="Loading" />;
+  // Eight dots in a ring, lit one after another (dot-matrix style).
+  return (
+    <span class="spinner" style={{ width: `${size}px`, height: `${size}px` }} role="progressbar" aria-label="Loading">
+      <svg viewBox="0 0 24 24" width="100%" height="100%" aria-hidden="true">
+        {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => {
+          const a = (i / 8) * Math.PI * 2;
+          return <circle key={i} cx={12 + Math.sin(a) * 8.5} cy={12 - Math.cos(a) * 8.5} r={2.3} fill="currentColor" opacity={0.15 + (i / 7) * 0.85} />;
+        })}
+      </svg>
+    </span>
+  );
 }
 
 export function Button({ children, onClick, disabled, loading, variant = 'primary', type = 'button' }: {
