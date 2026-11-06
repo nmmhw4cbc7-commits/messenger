@@ -103,7 +103,10 @@ async function preview(): Promise<{ title: string; body: string; tag: string; co
     const title = conv?.kind === 'group' ? `${sender} · ${conv.title}` : sender;
     const p = result.payload;
     let body: string;
-    if (p.type === 'text') body = p.text;
+    if (p.type === 'text') {
+      body = p.text;
+      if (p.mentions?.includes(me.id)) return { title: `${sender} mentioned you${conv?.kind === 'group' ? ` · ${conv.title}` : ''}`, body: body.length > 180 ? `${body.slice(0, 177)}…` : body, tag: m.conversationId, convId: m.conversationId };
+    }
     else if (p.type === 'reaction') {
       if (!p.emoji) continue;
       const target = await idbGet<{ media?: { vlog?: string } }>('messages', p.target).catch(() => undefined);

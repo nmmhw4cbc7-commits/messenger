@@ -2935,3 +2935,11 @@ button.vlog-reaction:active { transform: scale(0.94); }
 .backup-pins { display: flex; flex-direction: column; gap: 10px; }
 .backup-pins .pin-input { text-align: center; }
 .backup-hint { margin: -4px 4px 4px; font-size: 13px; color: var(--text-2); text-align: center; }
+
+/* @mentions */
+.mention { font-weight: 600; color: var(--signal); }
+.out .mention { color: inherit; text-decoration: underline; text-underline-offset: 2px; text-decoration-color: var(--signal); text-decoration-thickness: 2px; }
+.mention.me { background: rgba(215, 25, 33, 0.12); border-radius: 4px; padding: 0 2px; }
+.mention-list { display: flex; flex-direction: column; margin: 0 10px 6px; padding: 4px; border-radius: 18px; background: var(--bg-elevated); box-shadow: 0 0 0 1px var(--line), 0 8px 24px rgba(0, 0, 0, 0.12); animation: rise-in 0.2s var(--snap) both; }
+.mention-option { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border: 0; border-radius: 12px; background: none; color: var(--text); font: inherit; font-size: 15.5px; text-align: left; }
+.mention-option:active { background: var(--press); }

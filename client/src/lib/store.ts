@@ -79,6 +79,8 @@ export interface Msg {
   editedAt?: number;
   /** Disappearing message: deleted from every device this many seconds after it was sent. */
   ttl?: number;
+  /** People tagged with @ in this message. */
+  mentions?: string[];
   createdAt: number;
   sortKey: number;
   status: 'pending' | 'sent' | 'failed' | 'received';
@@ -155,7 +157,7 @@ export interface State {
 
 export interface Activity {
   id: string;
-  type: 'reaction' | 'vlog' | 'joined';
+  type: 'reaction' | 'vlog' | 'joined' | 'mention';
   convId: string;
   userId: string;
   msgId?: string;
