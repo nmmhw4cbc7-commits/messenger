@@ -108,7 +108,7 @@ export interface MediaPayload {
 }
 
 export type Payload =
-  | { type: 'text'; text: string; reply?: { id: string; senderId: string; text: string } }
+  | { type: 'text'; text: string; reply?: { id: string; senderId: string; text: string }; mentions?: string[] }
   | { type: 'reaction'; target: string; emoji: string }
   | { type: 'media'; media: MediaPayload; reply?: { id: string; senderId: string; text: string } }
   | { type: 'location'; lat: number; lng: number; acc?: number }
@@ -177,7 +177,8 @@ function cleanPayloadBody(p: unknown): Payload | null {
     case 'text': {
       if (typeof o.text !== 'string') return null;
       const reply = cleanReply(o.reply);
-      return reply ? { type: 'text', text: o.text.slice(0, 8000), reply } : { type: 'text', text: o.text.slice(0, 8000) };
+      const mentions = Array.isArray(o.mentions) ? [...new Set(o.mentions.filter((x): x is string => typeof x === 'string' && ID.test(x)))].slice(0, 20) : [];
+      return { type: 'text', text: o.text.slice(0, 8000), ...(reply ? { reply } : {}), ...(mentions.length ? { mentions } : {}) };
     }
     case 'reaction':
       return typeof o.target === 'string' && ID.test(o.target) && str(o.emoji, 16) ? { type: 'reaction', target: o.target, emoji: o.emoji as string } : null;

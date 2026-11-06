@@ -266,6 +266,36 @@ function linkify(text: string) {
   return parts;
 }
 
+/** How tagged people can appear in the text: "@Jonas" or "@Jonas Weber". */
+function mentionLabels(conv: Conv, ids: string[]) {
+  const labels: string[] = [];
+  for (const id of ids) {
+    const m = conv.members.find((x) => x.id === id);
+    if (!m) continue;
+    const full = displayName(m);
+    labels.push(full, full.split(' ')[0]);
+  }
+  return [...new Set(labels)].filter(Boolean).sort((a, b) => b.length - a.length);
+}
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Links plus highlighted @mentions. */
+function withMentions(text: string, labels: string[], mentionsMe: boolean) {
+  if (!labels.length) return linkify(text);
+  const re = new RegExp(`@(${labels.map(escapeRe).join('|')})`, 'g');
+  const out: (string | JSX.Element)[] = [];
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    const start = m.index ?? 0;
+    if (start > last) out.push(...linkify(text.slice(last, start)));
+    out.push(<span key={`m${start}`} class={`mention${mentionsMe ? ' me' : ''}`}>{m[0]}</span>);
+    last = start + m[0].length;
+  }
+  if (last < text.length) out.push(...linkify(text.slice(last)));
+  return out;
+}
+
 function scrollToMessage(id: string, retry = true) {
   const el = document.querySelector<HTMLElement>(`.stack-item.top [data-msg="${CSS.escape(id)}"]`);
   if (!el && retry) {
@@ -418,7 +448,7 @@ function Bubble({ msg, conv, meId, first, last, onReply, onMenu, nameOf }: {
             ) : msg.kind === 'poll' ? (
               <PollCard msg={msg} conv={conv} meId={meId} />
             ) : (
-              <span class="bubble-text">{linkify(msg.text ?? '')}</span>
+              <span class="bubble-text">{msg.mentions?.length ? withMentions(msg.text ?? '', mentionLabels(conv, msg.mentions), msg.mentions.includes(meId)) : linkify(msg.text ?? '')}</span>
             )}
             {msg.kind === 'media' && !msg.deleted && msg.media?.caption && <span class="bubble-text caption">{linkify(msg.media.caption)}</span>}
             {/* Floated after the text: sits on the last line when there is room, otherwise on its own line. Never overlaps. */}
@@ -604,6 +634,9 @@ function Composer({ conv, paused, replyTo, replyName, onCancelReply }: {
   const convId = conv.id;
   const [text, setText] = useState('');
   const [recording, setRecording] = useState(false);
+  const [tags, setTags] = useState<{ id: string; label: string }[]>([]);
+  const [query, setQuery] = useState<string | null>(null);
+  const me = useStore((s) => s.me);
   const ref = useRef<HTMLTextAreaElement>(null);
   const draftKey = `draft:${convId}`;
 
@@ -629,9 +662,43 @@ function Composer({ conv, paused, replyTo, replyName, onCancelReply }: {
     } catch { /* storage unavailable */ }
   };
 
+  // "@" in a group: suggest members; picking one inserts "@Name" and tags them.
+  const findQuery = (value: string, caret: number) => {
+    if (conv.kind !== 'group') return null;
+    const m = /(?:^|\s)@([^\s@]{0,24})$/.exec(value.slice(0, caret));
+    return m ? m[1] : null;
+  };
+  const others = conv.members.filter((m) => m.id !== me?.id);
+  const firstNames = others.map((m) => displayName(m).split(' ')[0]);
+  const labelOf = (m: (typeof others)[number]) => {
+    const full = displayName(m);
+    const first = full.split(' ')[0];
+    return firstNames.filter((f) => f === first).length > 1 ? full : first;
+  };
+  const suggestions = query === null ? [] : others.filter((m) => displayName(m).toLowerCase().includes(query.toLowerCase())).slice(0, 6);
+  const pick = (m: (typeof others)[number]) => {
+    const el = ref.current;
+    const caret = el?.selectionStart ?? text.length;
+    const before = text.slice(0, caret).replace(/@([^\s@]{0,24})$/, '');
+    const label = labelOf(m);
+    const insert = `@${label} `;
+    const next = before + insert + text.slice(caret);
+    update(next);
+    setTags((t) => [...t.filter((x) => x.id !== m.id), { id: m.id, label }]);
+    setQuery(null);
+    requestAnimationFrame(() => {
+      el?.focus();
+      const pos = (before + insert).length;
+      el?.setSelectionRange(pos, pos);
+    });
+  };
+
   const send = () => {
     if (!text.trim() || paused) return;
-    sendText(convId, text, replyTo ?? undefined);
+    const mentions = tags.filter((t) => text.includes(`@${t.label}`)).map((t) => t.id);
+    sendText(convId, text, replyTo ?? undefined, mentions);
+    setTags([]);
+    setQuery(null);
     update('');
     onCancelReply();
     haptic(6);
@@ -653,6 +720,16 @@ function Composer({ conv, paused, replyTo, replyName, onCancelReply }: {
           <button class="reply-bar-close" onPointerDown={(e) => e.preventDefault()} onClick={onCancelReply} aria-label="Cancel reply"><Close size={18} /></button>
         </div>
       )}
+      {suggestions.length > 0 && (
+        <div class="mention-list" role="listbox" aria-label="Tag someone">
+          {suggestions.map((m) => (
+            <button key={m.id} class="mention-option" role="option" onPointerDown={(e) => e.preventDefault()} onClick={() => pick(m)}>
+              <Avatar id={m.id} name={displayName(m)} src={avatarUrl(m)} size={28} />
+              <span>{displayName(m)}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div class="composer">
         <button class="composer-plus" aria-label="Share photo, video, location and more" disabled={paused} onClick={() => openAttachSheet(conv)}>
           <Plus size={24} />
@@ -668,8 +745,10 @@ function Composer({ conv, paused, replyTo, replyName, onCancelReply }: {
             disabled={paused}
             enterkeyhint={coarse ? 'enter' : 'send'}
             onInput={(e) => {
-              const v = (e.target as HTMLTextAreaElement).value;
+              const el = e.target as HTMLTextAreaElement;
+              const v = el.value;
               update(v);
+              setQuery(findQuery(v, el.selectionStart ?? v.length));
               if (v.trim()) sendTyping(convId);
             }}
             onKeyDown={(e) => {

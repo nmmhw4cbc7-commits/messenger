@@ -590,12 +590,13 @@ function updateBadge() {
 
 // ------------------------------------------------------------------ sending
 
-export async function sendText(convId: string, raw: string, reply?: ReplyRef) {
+export async function sendText(convId: string, raw: string, reply?: ReplyRef, mentions: string[] = []) {
   const text = raw.replace(/\s+$/, '').replace(/^\s*\n/, '').slice(0, MAX_TEXT);
   if (!text.trim() || !getState().me) return;
   const now = Date.now();
   const msg: Msg = { id: randomId(), convId, senderId: getState().me!.id, kind: 'text', text, createdAt: now, sortKey: now, status: 'pending', ...ttlOf(convId) };
   if (reply) msg.reply = { id: reply.id, senderId: reply.senderId, text: reply.text.slice(0, 200) };
+  if (mentions.length) msg.mentions = [...new Set(mentions)].slice(0, 20);
   await addMessages([msg], false);
   await addToOutbox(msg.id);
   flushOutbox();
@@ -745,7 +746,7 @@ function payloadBody(msg: Msg): Payload {
     case 'poll':
       return { type: 'poll', ...msg.poll! };
     default:
-      return msg.reply ? { type: 'text', text: msg.text ?? '', reply: msg.reply } : { type: 'text', text: msg.text ?? '' };
+      return { type: 'text', text: msg.text ?? '', ...(msg.reply ? { reply: msg.reply } : {}), ...(msg.mentions?.length ? { mentions: msg.mentions } : {}) };
   }
 }
 
@@ -978,7 +979,7 @@ async function processBatch(batch: SyncMessage[]) {
       const p = result.payload;
       const ttl = (p as { ttl?: number }).ttl;
       const base = { id: m.id, convId: m.conversationId, senderId: m.senderId, createdAt: m.createdAt, sortKey: m.createdAt, status: (fromMe ? 'sent' : 'received') as 'sent' | 'received', ...(ttl ? { ttl } : {}) };
-      if (p.type === 'text') out.push({ ...base, kind: 'text', text: p.text, ...(p.reply ? { reply: p.reply } : {}) });
+      if (p.type === 'text') out.push({ ...base, kind: 'text', text: p.text, ...(p.reply ? { reply: p.reply } : {}), ...(p.mentions?.length ? { mentions: p.mentions } : {}) });
       else if (p.type === 'media') out.push({ ...base, kind: 'media', media: p.media, ...(p.reply ? { reply: p.reply } : {}) });
       else if (p.type === 'location') out.push({ ...base, kind: 'location', location: { lat: p.lat, lng: p.lng, acc: p.acc } });
       else if (p.type === 'contact') out.push({ ...base, kind: 'contact', contactCard: { name: p.name, phone: p.phone } });
@@ -1502,6 +1503,8 @@ async function noteActivity(msgs: Msg[], reactions: { target: string; userId: st
   for (const m of msgs) {
     if (m.media?.vlog && m.senderId && m.senderId !== meId) {
       add.push({ id: `v:${m.media.vlog}:${m.senderId}`, type: 'vlog', convId: m.convId, userId: m.senderId, at: m.createdAt });
+    } else if (m.mentions?.includes(meId) && m.senderId && m.senderId !== meId) {
+      add.push({ id: `m:${m.id}`, type: 'mention', convId: m.convId, msgId: m.id, userId: m.senderId, snippet: (m.text ?? '').slice(0, 80), at: m.createdAt });
     } else if (m.kind === 'system' && m.system?.type === 'member_joined' && m.system.actorId !== meId) {
       add.push({ id: `j:${m.id}`, type: 'joined', convId: m.convId, userId: m.system.actorId, at: m.createdAt });
     }

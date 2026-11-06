@@ -614,11 +614,12 @@ function ActivitySheet({ close }: { close: () => Promise<void> }) {
     const name = displayName(who(a)) || 'Someone';
     if (a.type === 'reaction') return <><strong>{name}</strong> reacted {a.emoji} to your {a.vlog ? 'vlog' : 'message'}</>;
     if (a.type === 'vlog') return <><strong>{name}</strong> just vlogged</>;
+    if (a.type === 'mention') return <><strong>{name}</strong> mentioned you</>;
     return <><strong>{name}</strong> joined your friend group</>;
   };
   const open = async (a: Activity) => {
     await close();
-    if (a.type === 'reaction' && !a.vlog && convs[a.convId]) getNav().push(<ChatScreen convId={a.convId} />);
+    if (((a.type === 'reaction' && !a.vlog) || a.type === 'mention') && convs[a.convId]) getNav().push(<ChatScreen convId={a.convId} />);
   };
 
   return (
@@ -638,11 +639,11 @@ function ActivitySheet({ close }: { close: () => Promise<void> }) {
                   <button class={`activity-row${a.at > seenBefore.current ? ' new' : ''}`} onClick={() => open(a)}>
                     <span class="activity-avatar">
                       <Avatar id={a.userId} name={displayName(p) || '?'} src={p ? avatarUrl(p) : null} size={44} />
-                      <span class="activity-badge">{a.type === 'reaction' ? a.emoji : a.type === 'vlog' ? '🎬' : '👋'}</span>
+                      <span class="activity-badge">{a.type === 'reaction' ? a.emoji : a.type === 'vlog' ? '🎬' : a.type === 'mention' ? '@' : '👋'}</span>
                     </span>
                     <span class="activity-text">
                       <span>{text(a)}</span>
-                      {a.type === 'reaction' && !a.vlog && a.snippet && <span class="activity-snippet">“{a.snippet}”</span>}
+                      {((a.type === 'reaction' && !a.vlog) || a.type === 'mention') && a.snippet && <span class="activity-snippet">“{a.snippet}”</span>}
                       <span class="activity-time">{formatListTime(a.at)}</span>
                     </span>
                   </button>
