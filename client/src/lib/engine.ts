@@ -200,7 +200,7 @@ function applyTheme(theme: Theme) {
   if (theme === 'system') root.removeAttribute('data-theme');
   else root.setAttribute('data-theme', theme);
   const dark = theme === 'dark' || (theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#121211' : '#ecebe6');
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#000000' : '#f2f2f2');
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(getState().theme));
 

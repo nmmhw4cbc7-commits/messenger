@@ -15,7 +15,7 @@ export function Avatar({ id, name, src, size = 40, group = false }: { id: string
   }
   const text = group ? '' : initials(name);
   return (
-    <span class={`avatar avatar-fallback${group ? ' group' : ''}`} data-id={id} style={{ ...style, background: group ? 'var(--signal)' : 'var(--ink)' }} aria-hidden="true">
+    <span class={`avatar avatar-fallback${group ? ' group' : ''}`} data-id={id} style={{ ...style, background: group ? 'var(--avatar-group)' : 'var(--avatar-bg)' }} aria-hidden="true">
       {text || (group ? <People size={Math.round(size * 0.5)} /> : <Person size={Math.round(size * 0.5)} />)}
     </span>
   );
