@@ -4,6 +4,7 @@
 // place to talk about them.
 
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { pickEmoji } from '../ui/EmojiPicker';
 import { getState, useStore, type Activity, type Conv, type Member, type Msg } from '../lib/store';
 import {
   addMembers, avatarUrl, createCircle, createCircleInvite, deleteForEveryone, displayName, formatDuration, joinCircle, loadMessages, markActivitySeen,
@@ -339,15 +340,6 @@ function Timeline({ posts }: { posts: Msg[] }) {
 
 
 /** React right on the post; the person who posted it gets a notification. */
-/** The first emoji in what was typed (works with skin tones, flags and joined emoji). */
-function firstEmoji(text: string): string | null {
-  const parts = typeof Intl !== 'undefined' && 'Segmenter' in Intl
-    ? [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)].map((x) => x.segment)
-    : [...text];
-  const hit = parts.find((g) => /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(g));
-  return hit && hit.length <= 16 ? hit : null;
-}
-
 /** Dashed smiley with a plus: "add a reaction". */
 function AddReactionIcon() {
   return (
@@ -364,8 +356,6 @@ function AddReactionIcon() {
 function Reactions({ msg }: { msg: Msg }) {
   const meId = useStore((s) => s.me?.id);
   const conv = useStore((s) => s.convs[msg.convId]);
-  const input = useRef<HTMLInputElement>(null);
-  const [picking, setPicking] = useState(false);
   const mine = msg.senderId === meId;
   const entries = Object.entries(msg.reactions ?? {}).filter(([, e]) => e);
   const counts = new Map<string, number>();
@@ -383,21 +373,9 @@ function Reactions({ msg }: { msg: Msg }) {
       </div>
     );
   }
-  // Focus right in the tap so the keyboard opens; any emoji from it becomes the reaction.
-  const openPicker = () => {
-    const el = input.current;
-    if (!el) return;
-    el.value = '';
-    el.focus();
-  };
-  const onInput = () => {
-    const el = input.current;
-    if (!el) return;
-    const emoji = firstEmoji(el.value);
-    if (!emoji) { el.value = ''; return; }
-    el.value = '';
-    el.blur();
-    if (myEmoji !== emoji) tap(emoji);
+  const openPicker = async () => {
+    const emoji = await pickEmoji();
+    if (emoji && emoji !== myEmoji) tap(emoji);
   };
   return (
     <div class="vlog-reactions">
@@ -407,24 +385,9 @@ function Reactions({ msg }: { msg: Msg }) {
           {emoji}<em>{n}</em>
         </button>
       ))}
-      <button class={`vlog-react-add${picking ? ' picking' : ''}`} onClick={openPicker} aria-label="Add a reaction">
+      <button class="vlog-react-add" onClick={openPicker} aria-label="Add a reaction">
         <AddReactionIcon />
-        {picking && <span class="vlog-react-hint">Pick an emoji</span>}
       </button>
-      <input
-        ref={input}
-        class="vlog-emoji-input"
-        type="text"
-        inputMode="text"
-        enterKeyHint="done"
-        autoComplete="off"
-        autoCorrect="off"
-        aria-label="Reaction emoji"
-        onFocus={() => setPicking(true)}
-        onBlur={() => setPicking(false)}
-        onInput={onInput}
-        onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-      />
     </div>
   );
 }
