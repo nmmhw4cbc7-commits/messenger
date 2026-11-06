@@ -2790,3 +2790,100 @@ button.vlog-reaction:active { transform: scale(0.94); }
 .emoji-tabs { flex: none; display: flex; justify-content: space-around; padding: 6px 8px 4px; border-top: 1px solid var(--line); }
 .emoji-tabs button { width: 34px; height: 34px; border: 0; border-radius: 10px; background: none; font-size: 19px; filter: grayscale(1); opacity: 0.55; }
 .emoji-tabs button.on { background: var(--fill); filter: none; opacity: 1; }
+
+/* ================================================================== Motion (Nothing style)
+   Short, one-shot and mechanical: dot-matrix titles scan in, content rises in
+   a quick stagger, chips pop, the active tab bar draws itself. Nothing loops
+   except loading indicators, and everything is off with reduced motion. */
+
+:root { --snap: cubic-bezier(0.2, 0.9, 0.1, 1); }
+
+/* Loading: a ring of dots that steps round */
+.spinner { border: 0; border-radius: 0; opacity: 0.85; animation: spin 0.8s steps(8) infinite; }
+.spinner svg { display: block; }
+
+/* Dot-matrix titles scan in from the left, like an LED display */
+@keyframes dot-scan { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+.large-title, .form-title { animation: dot-scan 0.55s steps(14) both; }
+.welcome h1.wordmark { animation: dot-scan 0.8s steps(10) 0.1s both; }
+.welcome-lede { animation: rise-in 0.4s var(--snap) 0.5s both; }
+.welcome .spec li { animation: rise-in 0.36s var(--snap) both; }
+.welcome .spec li:nth-child(1) { animation-delay: 0.6s; } .welcome .spec li:nth-child(2) { animation-delay: 0.68s; } .welcome .spec li:nth-child(3) { animation-delay: 0.76s; }
+.welcome-actions { animation: rise-in 0.4s var(--snap) 0.85s both; }
+
+/* Content rises in, staggered */
+@keyframes rise-in { from { opacity: 0; transform: translateY(8px); } }
+.tab-pane.active .vlog-card,
+.tab-pane.active .vlog-topline,
+.tab-pane.active .vlog-section-head,
+.tab-pane.active .vlog-friends,
+.tab-pane.active .section,
+.tab-pane.active .chat-list > li,
+.screen .section,
+.vlog-timeline > li,
+.activity-list > li,
+.theme-tile,
+.vlog-days > li {
+  animation: rise-in 0.36s var(--snap) both;
+}
+.tab-pane.active .vlog-topline { animation-delay: 40ms; }
+.tab-pane.active .vlog-card { animation-delay: 80ms; }
+.tab-pane.active .vlog-section-head { animation-delay: 140ms; }
+.tab-pane.active .vlog-friends { animation-delay: 170ms; }
+.section:nth-child(2), .chat-list > li:nth-child(2), .vlog-timeline > li:nth-child(2), .activity-list > li:nth-child(2), .theme-tile:nth-child(2), .vlog-days > li:nth-child(2) { animation-delay: 35ms; }
+.section:nth-child(3), .chat-list > li:nth-child(3), .vlog-timeline > li:nth-child(3), .activity-list > li:nth-child(3), .theme-tile:nth-child(3), .vlog-days > li:nth-child(3) { animation-delay: 70ms; }
+.section:nth-child(4), .chat-list > li:nth-child(4), .vlog-timeline > li:nth-child(4), .activity-list > li:nth-child(4), .theme-tile:nth-child(4), .vlog-days > li:nth-child(4) { animation-delay: 105ms; }
+.section:nth-child(5), .chat-list > li:nth-child(5), .activity-list > li:nth-child(5), .theme-tile:nth-child(5) { animation-delay: 140ms; }
+.section:nth-child(6), .chat-list > li:nth-child(6), .activity-list > li:nth-child(6), .theme-tile:nth-child(6) { animation-delay: 175ms; }
+.section:nth-child(n+7), .chat-list > li:nth-child(n+7), .activity-list > li:nth-child(n+7), .theme-tile:nth-child(n+7) { animation-delay: 210ms; }
+
+/* The dot grid in the Today card fills in, row by row */
+@keyframes dots-in { from { clip-path: inset(0 0 100% 0); } to { clip-path: inset(0 0 0 0); } }
+.vlog-card::after { animation: dots-in 0.7s steps(10) 0.2s both; }
+
+/* Active tab: the red bar draws out from the centre; the icon nudges */
+@keyframes bar-draw { from { transform: scaleX(0); } }
+@keyframes tab-nudge { 40% { transform: translateY(-2px); } }
+.tabbar button.active::before { animation: bar-draw 0.32s var(--snap) both; }
+.tabbar button.active .tab-icon { animation: tab-nudge 0.3s var(--snap); }
+
+/* Pops: badges, reaction chips, the add-reaction smiley, selected theme */
+@keyframes pop { 0% { transform: scale(0.6); opacity: 0; } 60% { transform: scale(1.12); opacity: 1; } 100% { transform: scale(1); } }
+.unread-badge, .tab-badge, .bell-dot, .vlog-reaction, .vlog-reaction.on em { animation: pop 0.34s var(--snap) both; }
+.vlog-react-add { transition: transform 0.15s var(--snap), color 0.15s; }
+.vlog-react-add:active svg { transform: rotate(-12deg); transition: transform 0.15s; }
+.theme-tile.on .theme-preview { animation: pop 0.3s var(--snap); }
+.emoji-cell { transition: transform 0.12s var(--snap); }
+
+/* New messages slide up into place */
+@keyframes bubble-in { from { opacity: 0; transform: translateY(10px) scale(0.97); } }
+.messages-inner > .bubble-row:last-child .bubble, .messages-inner > :last-child .bubble { animation: bubble-in 0.3s var(--snap) both; }
+.out .bubble { transform-origin: bottom right; }
+.in .bubble { transform-origin: bottom left; }
+.system-line { animation: rise-in 0.3s var(--snap) both; }
+
+/* Buttons feel mechanical: a quick press, a crisp release */
+.btn, .pill-button, .bell-button, .vlog-action, .vlog-reaction, .link-button, .cell, .chat-row, .theme-tile {
+  transition: transform 0.14s var(--snap), background-color 0.14s, opacity 0.14s;
+}
+.btn:active:not(:disabled), .pill-button:active, .vlog-action:active { transform: scale(0.96); }
+.cell:active, .chat-row:active { transform: scale(0.992); }
+
+/* Toggles: the knob snaps across */
+.toggle-knob { transition: transform 0.28s var(--snap); }
+
+/* Avatars fade in; the vlogger's avatar pops */
+@keyframes fade-in-soft { from { opacity: 0; } }
+.vlog-card-person .avatar, .vlog-card-person img { animation: pop 0.4s var(--snap) 0.12s both; }
+.vlog-friend { animation: rise-in 0.3s var(--snap) both; }
+.vlog-friend:nth-child(2) { animation-delay: 40ms; } .vlog-friend:nth-child(3) { animation-delay: 80ms; }
+.vlog-friend:nth-child(4) { animation-delay: 120ms; } .vlog-friend:nth-child(n+5) { animation-delay: 160ms; }
+
+/* Progress meters fill segment by segment */
+@keyframes seg-on { from { transform: scaleX(0); } }
+.vlog-meter span.on { transform-origin: left; animation: seg-on 0.3s steps(4) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0ms !important; transition-duration: 0.01ms !important; }
+  .spinner { animation-duration: 0.8s !important; }
+}
