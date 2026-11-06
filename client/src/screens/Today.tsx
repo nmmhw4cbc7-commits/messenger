@@ -330,7 +330,8 @@ function PostSheet({ p, close }: { p: Picked; close: () => Promise<void> }) {
 // ------------------------------------------------------------------ timeline
 
 function Timeline({ posts }: { posts: Msg[] }) {
-  const sorted = [...posts].sort((a, b) => a.createdAt - b.createdAt);
+  // Newest first: the latest moment of the day is always on top.
+  const sorted = [...posts].sort((a, b) => b.createdAt - a.createdAt);
   return (
     <ol class="vlog-timeline">
       {sorted.map((m) => <TimelineItem key={m.id} msg={m} />)}
