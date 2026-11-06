@@ -189,9 +189,12 @@ export async function removeGroupPhoto(convId: string) {
   await upsertServerConv(res.conversation);
 }
 
-export async function setChatTheme(convId: string, theme: string) {
+export async function setChatTheme(convId: string, theme: string, name: string) {
+  const before = getState().convs[convId]?.theme ?? '';
   const res = await api<{ conversation: ServerConv }>('PUT', `/api/conversations/${convId}/theme`, { theme });
   await upsertServerConv(res.conversation);
+  // The others get "… changed the chat theme" from the server; show it here too.
+  if (before !== theme) await localSystem(convId, { type: 'theme_changed', actorId: getState().me!.id, title: name });
 }
 
 export async function setTheme(theme: Theme) {
