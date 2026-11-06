@@ -75,14 +75,56 @@ async function sendPickedFile(convId: string, file: File, viewOnce = false) {
       const v = await prepareVideo(file);
       await sendMedia(convId, v.blob, { kind: 'video', w: v.w, h: v.h, duration: v.duration, thumb: v.thumb });
     } else if (file.type.startsWith('image/')) {
+      if (!viewOnce) {
+        getNav().present((close) => <PhotoSendSheet convId={convId} file={file} close={close} />, { variant: 'full' });
+        return;
+      }
       const p = await preparePhoto(file);
-      await sendMedia(convId, p.blob, { kind: 'image', w: p.w, h: p.h, ...(viewOnce ? { viewOnce: true } : { thumb: p.thumb }) });
+      await sendMedia(convId, p.blob, { kind: 'image', w: p.w, h: p.h, viewOnce: true });
     } else {
       throw new Error('Please choose a photo or video.');
     }
   } catch (err) {
     toast(errorMessage(err), 'error');
   }
+}
+
+const HD_KEY = 'haven.photoHD';
+
+/** Look at the photo before sending: HD on or off, optional caption. */
+function PhotoSendSheet({ convId, file, close }: { convId: string; file: File; close: () => Promise<void> }) {
+  const [hd, setHd] = useState(() => { try { return localStorage.getItem(HD_KEY) === '1'; } catch { return false; } });
+  const [caption, setCaption] = useState('');
+  const [busy, run] = useAsync();
+  const [url] = useState(() => URL.createObjectURL(file));
+  useEffect(() => () => URL.revokeObjectURL(url), [url]);
+  const toggle = () => {
+    const next = !hd;
+    setHd(next);
+    try { localStorage.setItem(HD_KEY, next ? '1' : '0'); } catch { /* fine */ }
+  };
+  const send = () => run(async () => {
+    const p = await preparePhoto(file, hd);
+    const text = caption.trim().slice(0, 1000);
+    await sendMedia(convId, p.blob, { kind: 'image', w: p.w, h: p.h, thumb: p.thumb, ...(hd ? { hd: true } : {}), ...(text ? { caption: text } : {}) });
+    await close();
+  });
+  return (
+    <div class="sheet-page photo-send">
+      <div class="sheet-header sheet-drag">
+        <button class="nav-button" onClick={() => close()}>Cancel</button>
+        <strong>Photo</strong>
+        <button class={`hd-toggle${hd ? ' on' : ''}`} onClick={toggle} aria-pressed={hd} aria-label="Send in HD">HD</button>
+      </div>
+      <div class="photo-send-preview"><img src={url} alt="" draggable={false} /></div>
+      <p class="photo-send-note">{hd ? 'HD: full resolution. Takes longer to send and uses more data.' : 'Standard quality. Tap HD for full resolution.'}</p>
+      <div class="photo-send-bar">
+        <input class="field" type="text" placeholder="Add a caption" maxLength={1000} value={caption} aria-label="Caption"
+          onInput={(e) => setCaption((e.target as HTMLInputElement).value)} onKeyDown={(e) => e.key === 'Enter' && send()} />
+        <button class="send-button ready" onClick={send} disabled={busy} aria-label="Send">{busy ? <Spinner size={18} /> : <ArrowUp size={20} />}</button>
+      </div>
+    </div>
+  );
 }
 
 function AttachSheet({ conv, close }: { conv: Conv; close: () => Promise<void> }) {
@@ -360,6 +402,7 @@ function Visual({ msg }: { msg: Msg }) {
     >
       {url && media.kind === 'image' && <img src={url} alt="" draggable={false} decoding="async" />}
       {url && media.kind === 'video' && <video src={url} muted playsInline preload="metadata" />}
+      {media.hd && <span class="hd-badge">HD</span>}
       {media.kind === 'video' && <span class="visual-play"><Play size={22} />{media.duration ? <em>{formatDuration(media.duration)}</em> : null}</span>}
       {!url && !error && <span class="visual-loading"><Spinner /></span>}
       {error && <span class="visual-error">{error}</span>}

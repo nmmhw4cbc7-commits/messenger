@@ -118,11 +118,14 @@ async function thumbOf(source: CanvasImageSource, w: number, h: number) {
   return canvas.toDataURL('image/jpeg', 0.5);
 }
 
-/** Re-encode a photo: at most 2048 px, metadata (location, camera) removed. */
-export async function preparePhoto(file: Blob) {
+/**
+ * Re-encode a photo, metadata (location, camera) removed. Standard: at most
+ * 2048 px. HD: full resolution up to 4096 px at high quality.
+ */
+export async function preparePhoto(file: Blob, hd = false) {
   const img = await loadImage(file);
-  const canvas = drawScaled(img, img.naturalWidth, img.naturalHeight, 2048);
-  const blob = await canvasBlob(canvas, 'image/jpeg', 0.84);
+  const canvas = drawScaled(img, img.naturalWidth, img.naturalHeight, hd ? 4096 : 2048);
+  const blob = await canvasBlob(canvas, 'image/jpeg', hd ? 0.92 : 0.84);
   return { blob, w: canvas.width, h: canvas.height, thumb: await thumbOf(img, img.naturalWidth, img.naturalHeight) };
 }
 
