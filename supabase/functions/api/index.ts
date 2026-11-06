@@ -428,12 +428,24 @@ async function announcePick(convId: string, day: string, hour: number) {
   await broadcast([row.user_id, ...others], 'conversations');
 }
 
+/** At 18:00 (German time): ask today's pick once whether they vlogged yet, if they haven't posted. */
+async function remindPick(convId: string, day: string, hour: number) {
+  if (hour < 18 || hour >= 22) return;
+  const [row] = await sql`update haven.circle_days set reminded = true
+                          where conversation_id = ${convId} and day = ${day} and not reminded and posted_at = 0 returning user_id`;
+  if (!row) return;
+  await notifyUsers([row.user_id], 'Have you vlogged today? 🎬', 'Your friends are waiting for your day. You can still post until midnight.', 'today');
+}
+
 async function circleTick() {
   const { day, hour } = await berlinNow();
   const circles = await sql`select id from haven.conversations where circle`;
   for (const c of circles) {
     try {
-      if (await ensurePick(c.id, day)) await announcePick(c.id, day, hour);
+      if (await ensurePick(c.id, day)) {
+        await announcePick(c.id, day, hour);
+        await remindPick(c.id, day, hour);
+      }
     } catch (err) {
       console.error('circle tick', String(err));
     }
@@ -1425,6 +1437,8 @@ route('POST', '/conversations/:id/messages', async ({ req, reply, params, body }
     const { day } = await berlinNow();
     const [pick] = await sql`select user_id from haven.circle_days where conversation_id = ${conv.id} and day = ${day}`;
     if (pick?.user_id !== user.id) throw new HttpError(403, 'not_your_turn', 'It’s not your turn to vlog today.');
+    // Remember that today's vlog has started, so the 18:00 reminder is skipped.
+    await sql`update haven.circle_days set posted_at = ${now()} where conversation_id = ${conv.id} and day = ${day} and posted_at = 0`;
   }
 
   const [existing] = await sql`select conversation_id, sender_id, created_at from haven.messages where id = ${b.id}`;
