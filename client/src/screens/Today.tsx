@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { pickEmoji } from '../ui/EmojiPicker';
 import { getState, useStore, type Activity, type Conv, type Member, type Msg } from '../lib/store';
 import {
-  addMembers, avatarUrl, createCircle, createCircleInvite, deleteForEveryone, displayName, formatDuration, joinCircle, loadMessages, markActivitySeen,
+  addMembers, avatarUrl, selectCircle, createCircle, createCircleInvite, deleteForEveryone, displayName, formatDuration, joinCircle, loadMessages, markActivitySeen,
   react, refreshCircle, sendMedia, vlogPosts, vlogUsage, VLOG_LIMITS,
 } from '../lib/engine';
 import { formatListTime } from '../lib/format';
@@ -15,7 +15,7 @@ import { compressVideo, MAX_FILE, preparePhoto, prepareVideo } from '../lib/medi
 import { errorMessage } from '../lib/api';
 import { Avatar, Button, Screen, Spinner, actionSheet, confirmAction, toast, useAsync } from '../ui/components';
 import { getNav, useNav } from '../ui/nav';
-import { Bell, Camera, ChevronRight, PersonAdd, Chats as ChatIcon, Close, Share, Copy } from '../ui/icons';
+import { Bell, Camera, ChevronRight, ChevronDown, PersonAdd, Chats as ChatIcon, Close, Share, Copy, Check, Plus } from '../ui/icons';
 import { PeoplePicker } from './NewChat';
 import { ChatScreen } from './Chat';
 import { openViewer, pickFile, useMediaUrl } from './Attachments';
@@ -556,12 +556,10 @@ export function openJoinConfirm(code: string) {
 }
 
 function JoinConfirmSheet({ close, code }: { close: () => Promise<void>; code: string }) {
-  const circle = useStore((s) => s.circle);
   const [info, setInfo] = useState<InvitePreview | null>(null);
   const [error, setError] = useState('');
   const [busy, run] = useAsync();
   useEffect(() => { previewInvite(code).then(setInfo, (err) => setError(errorMessage(err))); }, [code]);
-  const elsewhere = Boolean(circle?.id) && info && !info.member;
   const join = () => run(async () => {
     const c = await joinCircle(code);
     await close();
@@ -584,8 +582,6 @@ function JoinConfirmSheet({ close, code }: { close: () => Promise<void>; code: s
             <p class="muted">{info.creator ? <><strong>{info.creator}</strong> created this friend group. </> : ''}{info.members} {info.members === 1 ? 'member' : 'members'}. Every day one of you vlogs their day.</p>
             {info.member ? (
               <Button onClick={() => close()}>You’re already in this group</Button>
-            ) : elsewhere ? (
-              <p class="notice-text">You’re already in another friend group. For now you can be in one group at a time.</p>
             ) : (
               <Button onClick={join} loading={busy}>{`Join “${info.title}”`}</Button>
             )}
@@ -636,6 +632,61 @@ function JoinSheet({ close }: { close: () => Promise<void> }) {
   );
 }
 
+// ------------------------------------------------------------------ several friend groups
+
+/** Next to the bell: which friend group is shown, switch, or add one. */
+function GroupSwitch() {
+  const circle = useStore((s) => s.circle);
+  const groups = circle?.circles ?? [];
+  const current = groups.find((g) => g.id === circle?.id);
+  return (
+    <button class="group-switch" onClick={openGroupSheet} aria-label={current ? `Friend group: ${current.title}. Switch or add` : 'Add a friend group'}>
+      {current ? <span class="group-switch-name">{current.title}</span> : <PersonAdd size={18} />}
+      {groups.length > 1 && <span class="group-switch-count">{groups.length}</span>}
+      <ChevronDown size={16} />
+    </button>
+  );
+}
+
+function openGroupSheet() {
+  getNav().present((close) => <GroupSheet close={close} />, { variant: 'card' });
+}
+
+function GroupSheet({ close }: { close: () => Promise<void> }) {
+  const circle = useStore((s) => s.circle);
+  const groups = circle?.circles ?? [];
+  const pick = async (id: string) => {
+    await close();
+    if (id !== circle?.id) selectCircle(id).catch((err) => toast(errorMessage(err), 'error'));
+  };
+  return (
+    <div class="sheet-page">
+      <div class="sheet-header sheet-drag">
+        <span />
+        <strong>Friend groups</strong>
+        <button class="nav-button bold" onClick={() => close()}>Done</button>
+      </div>
+      <div class="sheet-content">
+        {groups.length > 0 && (
+          <ul class="group-list">
+            {groups.map((g) => (
+              <li key={g.id}>
+                <button class={`group-row${g.id === circle?.id ? ' on' : ''}`} onClick={() => pick(g.id)}>
+                  <span class="group-row-name" data-no-i18n>{g.title}</span>
+                  {g.id === circle?.id && <Check size={18} stroke={2.4} />}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <Button onClick={async () => { await close(); openCircleSetup(); }}><Plus size={19} /> New friend group</Button>
+        <Button variant="secondary" onClick={async () => { await close(); openJoinSheet(); }}>Join with an invite link</Button>
+        <p class="muted center-text">The Today screen shows one group at a time. Your chats stay the same.</p>
+      </div>
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------ notification center
 
 /** Date on the left, notifications on the right, right under the title. */
@@ -644,10 +695,13 @@ function TopLine({ today }: { today: string }) {
   return (
     <div class="vlog-topline">
       <p class="vlog-date">{new Date(`${today}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+      <span class="topline-actions">
+      <GroupSwitch />
       <button class={`bell-button${unseen ? ' unseen' : ''}`} onClick={openActivity} aria-label={unseen ? 'Notifications, new' : 'Notifications'}>
         <Bell size={21} />
         {unseen && <span class="bell-dot" />}
       </button>
+      </span>
     </div>
   );
 }

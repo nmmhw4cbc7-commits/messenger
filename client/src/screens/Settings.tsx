@@ -12,11 +12,10 @@ import { parsePhoneNumberFromString } from 'libphonenumber-js/min';
 import { errorMessage } from '../lib/api';
 import { Avatar, Button, Cell, Screen, Section, Segmented, Spinner, Toggle, NavButton, actionSheet, confirmAction, toast, useAsync, Empty } from '../ui/components';
 import { goBack, useNav } from '../ui/nav';
-import { Bell, Block, Camera, Lock, Logout, Moon, Shield, Trash, Info, CheckDouble, Key, Clock, Vibrate, Check, Cloud, Globe } from '../ui/icons';
+import { Bell, Block, Camera, Lock, Logout, Moon, Shield, Trash, Info, CheckDouble, Key, Clock, Vibrate, Cloud, Globe } from '../ui/icons';
 import { BackupScreen } from './Backup';
 import { hapticsOn, setHaptics } from '../lib/haptics';
 import { langSetting, setLangSetting, type LangSetting } from '../lib/i18n';
-import { currentAppIcon, setAppIcon, type AppIcon } from '../lib/appIcon';
 import { DevicesScreen } from './Devices';
 
 export function SettingsTab() {
@@ -24,19 +23,12 @@ export function SettingsTab() {
   const me = useStore((s) => s.me)!;
   const theme = useStore((s) => s.theme);
   const [haptics, setHapticsState] = useState(hapticsOn());
-  const [icon, setIcon] = useState<AppIcon>(currentAppIcon());
   const [lang, setLang] = useState<LangSetting>(langSetting());
   const chooseLang = async (v: LangSetting) => {
     setLang(v);
     setLangSetting(v);
     await syncLanguage().catch(() => {});
     location.reload();
-  };
-  const chooseIcon = (v: AppIcon) => {
-    if (v === icon) return;
-    setAppIcon(v);
-    setIcon(v);
-    toast('Icon saved. On iPhone it appears with the next install. Don’t remove Haven just for this: that deletes the chats on this phone.');
   };
 
   return (
@@ -89,20 +81,6 @@ export function SettingsTab() {
           </span>
         </div>
         <Cell icon={<Vibrate size={19} />} iconBg="ink" title="Haptics" right={<Toggle label="Haptics" checked={haptics} onChange={(v) => { setHaptics(v); setHapticsState(v); }} />} />
-        <div class="cell cell-stacked">
-          <span class="cell-icon filled"><img src={`/icons/${icon}/icon-192.png`} alt="" width={19} height={19} class="cell-icon-img" /></span>
-          <span class="cell-main">
-            <span class="cell-title">App icon</span>
-            <span class="icon-options">
-              {(['black', 'white', 'red'] as AppIcon[]).map((v) => (
-                <button key={v} class={`icon-option${v === icon ? ' on' : ''}`} onClick={() => chooseIcon(v)} aria-pressed={v === icon} aria-label={`${v} icon`}>
-                  <img src={`/icons/${v}/icon-192.png`} alt="" width={52} height={52} />
-                  <span>{v === icon && <Check size={12} stroke={2.6} />}{v}</span>
-                </button>
-              ))}
-            </span>
-          </span>
-        </div>
       </Section>
 
       <Section>

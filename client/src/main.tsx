@@ -2,7 +2,6 @@ import { render } from 'preact';
 import { App } from './app';
 import { boot } from './lib/engine';
 import './lib/haptics';
-import { applyAppIcon } from './lib/appIcon';
 import { startTranslation } from './lib/i18n';
 import './styles.css';
 
@@ -90,5 +89,4 @@ window.addEventListener('unhandledrejection', (e) => setTimeout(() => showStartu
 
 render(<App />, document.getElementById('app')!);
 startTranslation();
-applyAppIcon();
 boot().catch((err) => showStartupError(err));

@@ -286,6 +286,10 @@ const DE: Record<string, string> = {
   'Zoom into vlog and chat photos with two fingers or a double tap.': 'Zoome mit zwei Fingern oder Doppeltippen in Vlog- und Chat-Fotos.',
   'The camera opens right away. Decide after taking a photo whether it’s view once.': 'Die Kamera öffnet sich sofort. Ob ein Foto nur einmal ansehbar ist, entscheidest du nach der Aufnahme.',
   'The newest vlog posts are on top, and today’s vlogger gets a reminder at 6 pm.': 'Die neuesten Vlog-Posts stehen oben, und wer heute dran ist, wird um 18 Uhr erinnert.',
+  'Friend groups': 'Freundesgruppen', 'New friend group': 'Neue Freundesgruppe', 'Join with an invite link': 'Mit Einladungslink beitreten',
+  'The Today screen shows one group at a time. Your chats stay the same.': 'Die Heute-Seite zeigt immer eine Gruppe. Deine Chats bleiben gleich.',
+  'Add a friend group': 'Freundesgruppe hinzufügen', 'You can be in up to 10 friend groups.': 'Du kannst in bis zu 10 Freundesgruppen sein.',
+  'You can be in several friend groups. Switch or add one with the button next to the bell.': 'Du kannst in mehreren Freundesgruppen sein. Wechseln oder hinzufügen geht mit dem Button neben der Glocke.',
   // System lines
   'You joined the group': 'Du bist der Gruppe beigetreten', 'You changed the group photo': 'Du hast das Gruppenbild geändert', 'You removed the group photo': 'Du hast das Gruppenbild entfernt',
 };
@@ -296,6 +300,7 @@ const PATTERNS: Pattern[] = [
   [/^(.*, )?You(, .*)?$/, (m) => (m[1] || m[2] ? `${m[1] ?? ''}Du${m[2] ?? ''}` : 'Du')],
   [/^(.+) invites you to “(.+)”\.$/, (m) => `${m[1] === 'A friend' ? 'Ein Freund' : m[1]} lädt dich zu „${m[2]}“ ein.`],
   [/^ Get started, and you can join right after\.$/, () => ' Leg los – danach kannst du direkt beitreten.'],
+  [/^Friend group: (.+)\. Switch or add$/, (m) => `Freundesgruppe: ${m[1]}. Wechseln oder hinzufügen`],
   [/^(.+) just vlogged$/, (m) => `${m[1]} hat gerade gevloggt`],
   [/^(.+) hasn’t posted yet\. You’ll see it here as soon as they do\.$/, (m) => `${m[1] === 'They' ? 'Es wurde' : `${m[1]} hat`} noch nichts gepostet. Du siehst es hier, sobald es so weit ist.`],
   [/^(\d+) (post|posts) so far\. Follow their day below\.$/, (m) => `Bisher ${m[1]} ${m[1] === '1' ? 'Post' : 'Posts'}. Verfolge den Tag unten.`],

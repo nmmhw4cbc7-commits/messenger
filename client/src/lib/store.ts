@@ -175,6 +175,8 @@ export interface CircleState {
   today: string;
   /** day -> userId, newest first */
   picks: { day: string; userId: string }[];
+  /** All of my friend groups (the Today screen shows one at a time). */
+  circles: { id: string; title: string }[];
 }
 
 let state: State = {

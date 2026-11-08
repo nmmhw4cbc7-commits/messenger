@@ -423,10 +423,16 @@ async function berlinNow(): Promise<{ day: string; hour: number }> {
   return { day: r.day, hour: Number(r.hour) };
 }
 
-async function circleOf(userId: string): Promise<string | null> {
-  const [c] = await sql`select c.id from haven.conversations c join haven.members m on m.conversation_id = c.id
-                        where c.circle and m.user_id = ${userId} order by c.created_at limit 1`;
-  return c?.id ?? null;
+/** The user's friend groups (oldest first). Someone can be in several. */
+async function circlesOf(userId: string): Promise<{ id: string; title: string }[]> {
+  return (await sql`select c.id, c.title from haven.conversations c join haven.members m on m.conversation_id = c.id
+                    where c.circle and m.user_id = ${userId} order by c.created_at`).map((r) => ({ id: r.id as string, title: r.title as string }));
+}
+
+/** One of the user's friend groups: the preferred one if they are in it, else the oldest. */
+async function circleOf(userId: string, prefer?: string | null): Promise<string | null> {
+  const list = await circlesOf(userId);
+  return (prefer && list.find((c) => c.id === prefer)?.id) || list[0]?.id || null;
 }
 
 /** Today's pick: random among the members who have waited longest since their last turn. */
@@ -438,7 +444,10 @@ async function ensurePick(convId: string, day: string): Promise<string | null> {
                             left join haven.circle_days d on d.conversation_id = m.conversation_id and d.user_id = m.user_id
                             where m.conversation_id = ${convId} group by m.user_id`;
   if (members.length < 2) return null;
-  const sorted = members
+  // Nobody should vlog for two friend groups on the same day if it can be avoided.
+  const busy = new Set((await sql`select user_id from haven.circle_days where day = ${day} and conversation_id <> ${convId}`).map((r) => r.user_id as string));
+  const free = members.filter((m) => !busy.has(m.user_id));
+  const sorted = (free.length ? free : members)
     .map((m) => ({ id: m.user_id as string, last: m.last ? new Date(m.last).getTime() : 0, r: Math.random() }))
     .sort((a, b) => a.last - b.last || a.r - b.r);
   const pool = sorted.slice(0, Math.ceil(sorted.length / 2));
@@ -1319,11 +1328,9 @@ route('POST', '/conversations/:id/members', async ({ req, reply, params, body })
   const toAdd: string[] = [];
   for (const id of b.userIds) {
     if (!current.has(id) && (await namedUserExists(id)) && !(await hasBlocked(id, user.id))) {
-      if (conv.circle && (await circleOf(id))) continue; // one friend group per person
       toAdd.push(id);
     }
   }
-  if (conv.circle && !toAdd.length) throw new HttpError(400, 'in_other_circle', 'They are already in another friend group.');
   if (current.size + toAdd.length > MAX_GROUP) throw new HttpError(400, 'group_full', `Groups can have up to ${MAX_GROUP} members.`);
   if (toAdd.length) {
     const everyone = [...current, ...toAdd];
@@ -1386,31 +1393,32 @@ route('DELETE', '/conversations/:id/members/:userId', async ({ req, reply, param
 
 // ---- Vlog your Day
 
-route('GET', '/circle', async ({ req, reply }) => {
+route('GET', '/circle', async ({ req, reply, url }) => {
   const user = await currentUser(req, reply);
   const { day, hour } = await berlinNow();
-  const convId = await circleOf(user.id);
-  if (!convId) return { circle: null, today: day, picks: [] };
+  const circles = await circlesOf(user.id);
+  const want = url.searchParams.get('circle');
+  const convId = (want && circles.find((c) => c.id === want)?.id) || circles[0]?.id || null;
+  if (!convId) return { circle: null, circles, today: day, picks: [] };
   if (await ensurePick(convId, day)) await announcePick(convId, day, hour);
   const picks = await sql`select to_char(day, 'YYYY-MM-DD') as day, user_id from haven.circle_days
                           where conversation_id = ${convId} order by day desc limit 30`;
-  return { circle: convId, today: day, picks: picks.map((p) => ({ day: p.day, userId: p.user_id })) };
+  return { circle: convId, circles, today: day, picks: picks.map((p) => ({ day: p.day, userId: p.user_id })) };
 });
 
 route('POST', '/circle', async ({ req, reply, body }) => {
   const user = await currentUser(req, reply);
   const b = shape<{ title: string; memberIds: string[] }>(body, { title: [str(1, 200), true], memberIds: [idList(1, MAX_GROUP - 1), true] });
   await enforce(`group:${user.id}`, 20, HOUR);
-  if (await circleOf(user.id)) throw new HttpError(409, 'already_in_circle', 'You are already in a friend group.');
+  if ((await circlesOf(user.id)).length >= 10) throw new HttpError(400, 'too_many_circles', 'You can be in up to 10 friend groups.');
   const title = cleanLine(b.title, 60) || 'Friends';
   const memberList: string[] = [];
   const skipped: string[] = [];
   for (const id of b.memberIds) {
     if (id === user.id || !(await namedUserExists(id)) || (await hasBlocked(id, user.id))) continue;
-    if (await circleOf(id)) skipped.push(id);
-    else memberList.push(id);
+    memberList.push(id);
   }
-  if (!memberList.length) throw new HttpError(400, 'no_members', skipped.length ? 'These people are already in another friend group.' : 'Add at least one person.');
+  if (!memberList.length) throw new HttpError(400, 'no_members', 'Add at least one person.');
   const id = randomId();
   const t = now();
   await sql.begin(async (tx) => {
@@ -1428,8 +1436,8 @@ route('POST', '/circle', async ({ req, reply, body }) => {
 // admins can replace it (the old link stops working).
 route('POST', '/circle/invite', async ({ req, reply, body }) => {
   const user = await currentUser(req, reply);
-  const { reset } = shape<{ reset?: boolean }>(body, { reset: [(v) => v === true, false] });
-  const convId = await circleOf(user.id);
+  const { reset, circle } = shape<{ reset?: boolean; circle?: string }>(body, { reset: [(v) => v === true, false], circle: [isId, false] });
+  const convId = await circleOf(user.id, circle);
   if (!convId) throw new HttpError(400, 'no_circle', 'Create a friend group first.');
   await enforce(`invite:${user.id}`, 60, HOUR);
   const conv = await membershipOrThrow(convId, user.id);
@@ -1480,7 +1488,7 @@ route('POST', '/circle/join', async ({ req, reply, body }) => {
   if (!inv || (await hasBlocked(inv.created_by, user.id))) throw invalid;
   const current = await memberIds(inv.conversation_id);
   if (current.includes(user.id)) return { conversation: await oneConversation(inv.conversation_id, user.id) };
-  if (await circleOf(user.id)) throw new HttpError(409, 'already_in_circle', 'You are already in a friend group. Leave it first to join another one.');
+  if ((await circlesOf(user.id)).length >= 10) throw new HttpError(400, 'too_many_circles', 'You can be in up to 10 friend groups.');
   if (!user.name) throw new HttpError(400, 'no_name', 'Add your name first.');
   if (current.length >= MAX_GROUP) throw new HttpError(400, 'group_full', `Groups can have up to ${MAX_GROUP} members.`);
   await sql.begin(async (tx) => {
