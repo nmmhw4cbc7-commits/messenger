@@ -267,7 +267,7 @@ const meOf = (user: Row) => loadMe(user.id, user.device_id);
 // ------------------------------------------------------------------ realtime & push
 
 /** Tell users' apps to sync. The hint carries no data; the channel name is a per-user secret. */
-async function broadcast(userIds: string[], event: 'sync' | 'conversations' | 'profiles' | 'signout' | 'read' | 'typing', payload: Record<string, string> = {}) {
+async function broadcast(userIds: string[], event: 'sync' | 'conversations' | 'profiles' | 'signout' | 'read' | 'typing' | 'call', payload: Record<string, string> = {}) {
   if (!userIds.length) return;
   const rows = await sql`select inbox_token from haven.devices where user_id = any(${userIds})`;
   if (!rows.length) return;
@@ -377,6 +377,10 @@ const NOTE: Record<string, { title: Text; body: Text }> = {
   joined: {
     title: { en: '{name} joined your friend group 👋', de: '{name} ist deiner Freundesgruppe beigetreten 👋' },
     body: { en: 'Say hi on the Today screen.', de: 'Sag Hallo auf der Heute-Seite.' },
+  },
+  calling: {
+    title: { en: '{name} is calling 📞', de: '{name} ruft an 📞' },
+    body: { en: 'Tap to answer.', de: 'Tippe, um anzunehmen.' },
   },
   vlogged: {
     title: { en: '{name} just vlogged 🎬', de: '{name} hat gerade gevloggt 🎬' },
@@ -654,6 +658,7 @@ async function cleanup() {
   const t = now();
   await sql`delete from haven.sessions where expires_at < ${t}`;
   await sql`delete from haven.passkey_challenges where expires_at < ${t}`;
+  await sql`delete from haven.call_offers where expires_at < ${t}`;
   await sql`delete from haven.link_requests where expires_at < ${t}`;
   await sql`delete from haven.rate_limits where reset_at < ${t}`;
   await sql`delete from haven.messages where created_at < ${t - RETENTION_DAYS * DAY}`;
@@ -1635,6 +1640,59 @@ route('POST', '/conversations/:id/redeliver', async ({ req, reply, params, body 
   });
   await broadcast([b.userId], 'sync');
   return { ok: true };
+});
+
+// ---- voice calls (WebRTC, phone to phone)
+//
+// The server only passes the call setup between the two phones. Every setup
+// message is signed by the sending device, so the server can't swap in its own
+// keys; the audio itself goes directly between the phones, encrypted (DTLS-SRTP).
+// An incoming call is kept for 45 seconds so a phone that opens Haven from the
+// notification can still answer it.
+
+const CALL_TYPES = ['offer', 'answer', 'ice', 'hangup', 'decline', 'busy'];
+
+route('GET', '/calls/ice', async ({ req, reply }) => {
+  await currentUser(req, reply);
+  const servers: unknown[] = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }];
+  const turn = await kvGet('turn_servers');
+  if (turn) {
+    try { servers.push(...(JSON.parse(turn) as unknown[])); } catch { /* ignore a broken entry */ }
+  }
+  return { iceServers: servers };
+});
+
+route('POST', '/calls/signal', async ({ req, reply, body }) => {
+  const user = await currentUser(req, reply);
+  const b = shape<{ convId: string; to: string; payload: string; sig: string }>(body, {
+    convId: [isId, true], to: [isId, true], payload: [str(2, 30_000), true], sig: [str(40, 120, B64URL), true],
+  });
+  await enforce(`call:${user.id}`, 900, 10 * MIN);
+  let p: Row;
+  try { p = JSON.parse(b.payload); } catch { throw new HttpError(400, 'invalid_request'); }
+  if (!p || !CALL_TYPES.includes(p.type) || !ID_RE.test(String(p.callId))) throw new HttpError(400, 'invalid_request');
+  const conv = await membershipOrThrow(b.convId, user.id);
+  if (conv.kind !== 'direct' || b.to === user.id) throw new HttpError(400, 'not_direct', 'Calls work in one-to-one chats.');
+  const [peer] = await sql`select 1 from haven.members where conversation_id = ${conv.id} and user_id = ${b.to}`;
+  if (!peer) throw new HttpError(404, 'not_found');
+  if (await hasBlocked(b.to, user.id)) return ok;
+  const envelope = JSON.stringify({ from: user.id, fromDevice: user.device_id, conv: conv.id, payload: b.payload, sig: b.sig });
+  if (p.type === 'offer') {
+    await sql`insert into haven.call_offers (call_id, to_user, envelope, expires_at) values (${p.callId}, ${b.to}, ${envelope}, ${now() + 45_000})
+              on conflict (call_id) do update set envelope = excluded.envelope, expires_at = excluded.expires_at`;
+  } else if (p.type !== 'ice') {
+    await sql`delete from haven.call_offers where call_id = ${p.callId}`;
+  }
+  await broadcast([b.to, user.id], 'call', { d: envelope });
+  if (p.type === 'offer') await notifyUsers([b.to], 'calling', user.name || '', 'call');
+  return ok;
+});
+
+// A call that is still ringing for me (opened Haven from the call notification).
+route('GET', '/calls/pending', async ({ req, reply }) => {
+  const user = await currentUser(req, reply);
+  const [row] = await sql`select envelope from haven.call_offers where to_user = ${user.id} and expires_at > ${now()} order by expires_at desc limit 1`;
+  return { envelope: row?.envelope ?? null };
 });
 
 // ---- group photo (admins; in a friend group everyone). Only members can load it.

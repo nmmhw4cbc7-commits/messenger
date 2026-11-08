@@ -133,7 +133,7 @@ self.addEventListener('push', (event) => {
     try { data = event.data?.json() ?? {}; } catch { /* content-free push */ }
     if (data.t === 'announce' && data.title) {
       // Vlog news while the app is open: it is on screen already.
-      if (data.open === 'today' && (await self.clients.matchAll({ type: 'window', includeUncontrolled: true })).some((w) => w.visibilityState === 'visible')) return;
+      if ((data.open === 'today' || data.open === 'call') && (await self.clients.matchAll({ type: 'window', includeUncontrolled: true })).some((w) => w.visibilityState === 'visible')) return;
       await self.registration.showNotification(data.title, {
         body: data.body ?? '',
         tag: 'haven-announce',

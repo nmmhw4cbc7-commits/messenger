@@ -49,6 +49,7 @@ export async function boot() {
     if (err instanceof ApiError && err.status === 401) return; // handled by the session listener
   }
   startRealtime();
+  checkPendingCall().catch(() => {});
   syncLanguage().catch(() => {});
   pruneExpired().catch(() => {});
   refreshConversations().then(sync).then(() => autoResend()).catch(() => {});
@@ -1037,6 +1038,47 @@ const RT_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
 let socket: WebSocket | null = null;
 let socketInbox = '';
+
+// ------------------------------------------------------------------ calls (see call.ts)
+
+/** Call setup messages from the server ("signal", detail = envelope JSON). */
+export const callEvents = new EventTarget();
+
+/** Sign a call setup message with this device's key. */
+export async function signCall(text: string): Promise<string> {
+  if (!identity) throw new Error('Not signed in');
+  const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, identity.sigPriv, new TextEncoder().encode(text));
+  return toB64u(new Uint8Array(sig));
+}
+
+/** Was this call setup message really signed by that device of that person? */
+export async function verifyCall(convId: string, userId: string, deviceId: string, text: string, sig: string): Promise<boolean> {
+  const find = () => getState().convs[convId]?.members.find((m) => m.id === userId)?.devices.find((d) => d.id === deviceId)
+    ?? (userId === getState().me?.id ? getState().me?.devices.find((d) => d.id === deviceId) : undefined);
+  let device = find();
+  // A chat or device we don't know yet: load the current list once.
+  if (!device) {
+    await refreshConversations().catch(() => {});
+    if (userId === getState().me?.id) await refreshMe().catch(() => {});
+    device = find();
+  }
+  if (!device) return false;
+  try {
+    const key = await crypto.subtle.importKey('raw', fromB64u(device.sigPub), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+    return await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, fromB64u(sig), new TextEncoder().encode(text));
+  } catch {
+    return false;
+  }
+}
+
+/** A call still ringing for me (Haven was opened from the call notification). */
+export async function checkPendingCall() {
+  const res = await api<{ envelope: string | null }>('GET', '/api/calls/pending').catch(() => null);
+  if (res?.envelope) callEvents.dispatchEvent(new CustomEvent('signal', { detail: res.envelope }));
+}
+
+/** Note in the chat: "Call · 2:31", "Missed call". */
+export const addCallNote = (convId: string, body: SystemBody) => localSystem(convId, body);
 let retryTimer: number | undefined;
 let heartbeat: number | undefined;
 let backoff = 1000;
@@ -1109,6 +1151,10 @@ function connect() {
     }
     else if (kind === 'signout') api('GET', '/api/me').catch(() => {});
     else if (kind === 'typing') onTyping(msg.payload?.payload);
+    else if (kind === 'call') {
+      const d = (msg.payload?.payload as { d?: unknown } | undefined)?.d;
+      if (typeof d === 'string') callEvents.dispatchEvent(new CustomEvent('signal', { detail: d }));
+    }
   };
   ws.onclose = () => {
     if (socket !== ws) return;
@@ -1135,6 +1181,7 @@ document.addEventListener('visibilitychange', () => {
   backoff = 1000;
   connect();
   sync();
+  if (!getState().call) checkPendingCall().catch(() => {});
   const open = getState().openConvId;
   if (open) markRead(open);
   clearNotifications();
