@@ -10,6 +10,7 @@ import { api } from './api';
 import { addCallNote, callEvents, signCall, verifyCall } from './engine';
 import { getState, setState, type CallState } from './store';
 import { randomId } from './crypto';
+import { releaseMic, takeMic } from './mic';
 
 type Signal = {
   type: 'offer' | 'answer' | 'ice' | 'hangup' | 'decline' | 'busy';
@@ -53,7 +54,7 @@ async function send(c: { convId: string; peerId: string }, sig: Omit<Signal, 'ts
 }
 
 async function microphone() {
-  return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
+  return takeMic();
 }
 
 function newConnection(c: CallState, list: RTCIceServer[]) {
@@ -191,7 +192,7 @@ function finish(text: string, failed: boolean, note: 'auto' | 'missed' | 'none' 
   stopTone();
   pc?.close();
   pc = null;
-  local?.getTracks().forEach((t) => t.stop());
+  if (local) releaseMic();
   local = null;
   if (remoteAudio) {
     remoteAudio.srcObject = null;
