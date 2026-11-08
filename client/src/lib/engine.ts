@@ -1453,13 +1453,26 @@ export function otherMember(conv: Conv, meId: string | undefined) {
 let circleLoading: Promise<void> | null = null;
 
 /** Load my friend group and who vlogs today (the server picks one person per day). */
+const CIRCLE_KEY = 'haven.circle';
+const selectedCircle = () => { try { return localStorage.getItem(CIRCLE_KEY); } catch { return null; } };
+
+/** Show this friend group on the Today screen. */
+export async function selectCircle(id: string) {
+  try { localStorage.setItem(CIRCLE_KEY, id); } catch { /* fine */ }
+  const cur = getState().circle;
+  if (cur) setState({ circle: { ...cur, id, picks: cur.id === id ? cur.picks : [] } });
+  await refreshCircle();
+}
+
 export function refreshCircle(): Promise<void> {
   if (!getState().me) return Promise.resolve();
   if (!circleLoading) {
     circleLoading = (async () => {
-      const res = await api<{ circle: string | null; today: string; picks: { day: string; userId: string }[] }>('GET', '/api/circle');
+      const want = selectedCircle();
+      const res = await api<{ circle: string | null; circles?: { id: string; title: string }[]; today: string; picks: { day: string; userId: string }[] }>(
+        'GET', `/api/circle${want ? `?circle=${encodeURIComponent(want)}` : ''}`);
       if (res.circle && !getState().convs[res.circle]) await refreshConversations().catch(() => {});
-      setState({ circle: { id: res.circle, today: res.today, picks: res.picks } });
+      setState({ circle: { id: res.circle, today: res.today, picks: res.picks, circles: res.circles ?? [] } });
     })().finally(() => { circleLoading = null; });
   }
   return circleLoading;
@@ -1468,7 +1481,7 @@ export function refreshCircle(): Promise<void> {
 export async function createCircle(title: string, memberIds: string[]) {
   const res = await api<{ conversation: ServerConv; skipped: string[] }>('POST', '/api/circle', { title, memberIds });
   await upsertServerConv(res.conversation);
-  await refreshCircle();
+  await selectCircle(res.conversation.id);
   return res.skipped;
 }
 
@@ -1528,13 +1541,14 @@ export async function markActivitySeen() {
 
 /** The friend group's fixed invite code (admins can replace it with reset). */
 export async function createCircleInvite(reset = false) {
-  return api<{ code: string }>('POST', '/api/circle/invite', reset ? { reset: true } : {});
+  const circle = getState().circle?.id;
+  return api<{ code: string }>('POST', '/api/circle/invite', { ...(reset ? { reset: true } : {}), ...(circle ? { circle } : {}) });
 }
 
 export async function joinCircle(code: string) {
   const res = await api<{ conversation: ServerConv }>('POST', '/api/circle/join', { code });
   await upsertServerConv(res.conversation);
-  await refreshCircle();
+  await selectCircle(res.conversation.id);
   return res.conversation;
 }
 

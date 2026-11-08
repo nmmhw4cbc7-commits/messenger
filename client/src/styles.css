@@ -2994,3 +2994,18 @@ button.vlog-reaction:active { transform: scale(0.94); }
 .whats-new-list li { display: flex; gap: 14px; align-items: baseline; padding: 12px 4px; border-bottom: 1px solid var(--line); font-size: 15.5px; line-height: 1.45; animation: rise-in 0.3s var(--snap) both; }
 .whats-new-list li:nth-child(2) { animation-delay: 50ms; } .whats-new-list li:nth-child(3) { animation-delay: 100ms; } .whats-new-list li:nth-child(4) { animation-delay: 150ms; } .whats-new-list li:nth-child(5) { animation-delay: 200ms; }
 .whats-new-num { font-family: var(--mono); font-size: 12px; color: var(--signal); }
+
+/* Friend group switcher next to the bell */
+.topline-actions { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.group-switch { display: inline-flex; align-items: center; gap: 6px; max-width: 46vw; height: 40px; padding: 0 12px 0 14px; border: 0; border-radius: 999px; background: transparent; box-shadow: inset 0 0 0 1px var(--sep); color: var(--ink); font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.1em; text-transform: uppercase; }
+.group-switch:active { transform: scale(0.96); }
+.group-switch-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-switch-count { display: grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--signal); color: #fff; font-size: 10px; letter-spacing: 0; }
+.group-list { list-style: none; margin: 0 0 6px; padding: 0; border-radius: 20px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--line); }
+.group-list li + li { border-top: 1px solid var(--line); }
+.group-row { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 14px 16px; border: 0; background: none; color: var(--text); font: inherit; font-size: 16.5px; text-align: left; }
+.group-row:active { background: var(--press); }
+.group-row.on { font-weight: 600; }
+.group-row svg { color: var(--signal); }
+.vlog-topline { gap: 8px; }
+.vlog-topline .vlog-date { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
