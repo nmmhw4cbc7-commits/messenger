@@ -26,7 +26,21 @@ export async function renderAvatar(bitmap: ImageBitmap, crop: Crop | null, size 
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d')!;
   ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(bitmap, sx, sy, side, side, 0, 0, size, size);
+  const k = size / side; // output px per picture px
+  const covers = sx >= 0 && sy >= 0 && sx + side <= bitmap.width && sy + side <= bitmap.height;
+  if (!covers) {
+    // Zoomed out: fill the square with a blurred copy of the picture first.
+    // (Drawing it tiny and scaling it back up blurs it, and works in every browser.)
+    const small = document.createElement('canvas');
+    small.width = small.height = 24;
+    const sctx = small.getContext('2d')!;
+    const cover = Math.min(bitmap.width, bitmap.height);
+    sctx.drawImage(bitmap, (bitmap.width - cover) / 2, (bitmap.height - cover) / 2, cover, cover, 0, 0, 24, 24);
+    ctx.drawImage(small, -size * 0.05, -size * 0.05, size * 1.1, size * 1.1);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.12)';
+    ctx.fillRect(0, 0, size, size);
+  }
+  ctx.drawImage(bitmap, -sx * k, -sy * k, bitmap.width * k, bitmap.height * k);
   bitmap.close();
 
   for (const quality of [0.86, 0.78, 0.68, 0.55]) {
