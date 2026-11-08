@@ -3017,3 +3017,8 @@ button.vlog-reaction:active { transform: scale(0.94); }
 .username-field > span { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: var(--text-2, currentColor); opacity: .6; pointer-events: none; font-family: var(--mono, inherit); }
 .username-field > .field { padding-left: 34px; }
 .welcome-actions .btn svg { margin-right: 6px; vertical-align: -3px; }
+
+/* Start screen: with an invitation (and the iPhone install steps) it gets taller than the screen, so it scrolls. */
+.screen.welcome { overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; touch-action: pan-y; }
+.screen.welcome > * { flex-shrink: 0; }
+.screen.welcome > .welcome-body { flex: 1 0 auto; }
