@@ -76,51 +76,67 @@ async function saveMe(me: Me) {
 
 // ------------------------------------------------------------------ sign in
 
-export interface Verification {
-  phone: string;
-  verifyId: string;
-  pollSecret: string;
-  telegramUrl: string;
-  expiresAt: number;
-}
-
-type VerifyResponse = { status: 'ok'; isNew: boolean; me: Me } | { status: 'pin_required'; challenge: string } | { status: 'pending' };
+type SignInResponse = { status: 'ok'; isNew: boolean; me: Me; keptKeys?: boolean };
+type PasskeyOptions<T> = { challengeId: string; options: T };
 
 let pendingIdentity: Identity | null = null;
 let pendingIsStored = false;
 
-/**
- * Start phone verification. Keys for a new number are made in memory now and
- * only stored once the number is confirmed.
- */
-export async function startVerification(phone: string): Promise<Verification> {
-  const res = await api<Verification>('POST', '/api/auth/start', { phone });
-  const stored = (await idb.get<Identity>('meta', 'identity')) ?? null;
-  pendingIsStored = Boolean(stored && stored.phone === res.phone);
-  pendingIdentity = pendingIsStored && stored ? stored : await createIdentity(res.phone);
-  return res;
+/** Passkeys need WebAuthn (iOS 16+, Android 9+, every current desktop browser). */
+export function passkeySupported() {
+  return typeof window !== 'undefined' && 'PublicKeyCredential' in window && Boolean(navigator.credentials);
 }
 
-/** Ask whether the number was confirmed in Telegram yet. */
-export async function checkVerification(v: Verification): Promise<'pending' | 'done' | { pinChallenge: string }> {
-  if (!pendingIdentity) throw new Error('Please start again.');
-  const res = await api<VerifyResponse>('POST', '/api/auth/verify', {
-    verifyId: v.verifyId,
-    pollSecret: v.pollSecret,
-    encPub: pendingIdentity.encPub,
-    sigPub: pendingIdentity.sigPub,
+/** The person closed the Face ID / passkey sheet: not an error worth showing. */
+export function isPasskeyCancel(err: unknown) {
+  const name = (err as { name?: string; cause?: { name?: string } })?.name;
+  const cause = (err as { cause?: { name?: string } })?.cause?.name;
+  return name === 'NotAllowedError' || cause === 'NotAllowedError' || (err as { code?: string })?.code === 'ERROR_CEREMONY_ABORTED';
+}
+
+/** New account: create a passkey (Face ID) for it. No phone number needed. */
+export async function signUpWithPasskey(name: string) {
+  const { startRegistration } = await import('@simplewebauthn/browser');
+  const opts = await api<PasskeyOptions<Parameters<typeof startRegistration>[0]['optionsJSON']>>('POST', '/api/auth/passkey/register/options', { name });
+  const response = await startRegistration({ optionsJSON: opts.options });
+  const keys = await createIdentity('');
+  const res = await api<SignInResponse>('POST', '/api/auth/passkey/register', {
+    challengeId: opts.challengeId, response, name, encPub: keys.encPub, sigPub: keys.sigPub, deviceName: deviceName(),
+  });
+  pendingIdentity = keys;
+  pendingIsStored = false;
+  await finishSignIn(res.me);
+  // Brand-new account: next comes the profile photo and username.
+  setState({ phase: 'profile' });
+}
+
+/** Sign in with a passkey saved in iCloud Keychain / Google Password Manager. */
+export async function signInWithPasskey() {
+  const { startAuthentication } = await import('@simplewebauthn/browser');
+  const opts = await api<PasskeyOptions<Parameters<typeof startAuthentication>[0]['optionsJSON']>>('POST', '/api/auth/passkey/login/options', {});
+  const response = await startAuthentication({ optionsJSON: opts.options });
+  const stored = (await idb.get<Identity>('meta', 'identity')) ?? null;
+  const previousMe = (await idb.get<Me>('meta', 'me')) ?? null;
+  const fresh = await createIdentity('');
+  const res = await api<SignInResponse>('POST', '/api/auth/passkey/login', {
+    challengeId: opts.challengeId,
+    response,
+    fresh: { encPub: fresh.encPub, sigPub: fresh.sigPub },
+    ...(stored && previousMe ? { stored: { encPub: stored.encPub, sigPub: stored.sigPub }, knownUserId: previousMe.id } : {}),
     deviceName: deviceName(),
   });
-  if (res.status === 'pending') return 'pending';
-  if (res.status === 'pin_required') return { pinChallenge: res.challenge };
+  pendingIsStored = Boolean(res.keptKeys && stored);
+  pendingIdentity = pendingIsStored && stored ? stored : fresh;
   await finishSignIn(res.me);
-  return 'done';
 }
 
-export async function submitPin(challenge: string, pin: string) {
-  const res = await api<VerifyResponse>('POST', '/api/auth/pin', { challenge, pin });
-  if (res.status !== 'ok') throw new Error('Please start again.');
-  await finishSignIn(res.me);
+/** Signed in already (account from before passkeys): add a passkey so this account can sign in again later. */
+export async function addPasskey() {
+  const { startRegistration } = await import('@simplewebauthn/browser');
+  const opts = await api<PasskeyOptions<Parameters<typeof startRegistration>[0]['optionsJSON']>>('POST', '/api/passkeys/options', {});
+  const response = await startRegistration({ optionsJSON: opts.options });
+  const res = await api<{ me: Me }>('POST', '/api/passkeys', { challengeId: opts.challengeId, response });
+  await saveMe(res.me);
 }
 
 async function finishSignIn(me: Me) {
@@ -144,7 +160,7 @@ async function finishSignIn(me: Me) {
 
 // ------------------------------------------------------------------ profile
 
-export async function updateProfile(patch: { name?: string; about?: string; readReceipts?: boolean; presence?: boolean }) {
+export async function updateProfile(patch: { name?: string; about?: string; readReceipts?: boolean; presence?: boolean; username?: string }) {
   const res = await api<{ me: Me }>('PATCH', '/api/me', patch);
   await saveMe(res.me);
 }
@@ -156,16 +172,6 @@ export async function uploadAvatar(blob: Blob) {
 
 export async function removeAvatar() {
   const res = await api<{ me: Me }>('DELETE', '/api/me/avatar');
-  await saveMe(res.me);
-}
-
-export async function setPin(pin: string) {
-  const res = await api<{ me: Me }>('PUT', '/api/me/pin', { pin });
-  await saveMe(res.me);
-}
-
-export async function removePin(pin: string) {
-  const res = await api<{ me: Me }>('DELETE', '/api/me/pin', { pin });
   await saveMe(res.me);
 }
 
@@ -380,8 +386,9 @@ async function upsertServerConv(server: ServerConv) {
   return conv;
 }
 
-export async function lookupPhone(phone: string) {
-  return api<{ found: boolean; phone: string; user?: Profile }>('POST', '/api/users/lookup', { phone });
+/** Find someone by @username or phone number. */
+export async function lookupPhone(query: string) {
+  return api<{ found: boolean; phone: string; username?: string; user?: Profile }>('POST', '/api/users/lookup', { query });
 }
 
 export async function openDirect(userId: string) {
@@ -1201,8 +1208,8 @@ export async function signOut() {
   location.reload();
 }
 
-export async function deleteAccount(confirmPhone: string) {
-  await api('DELETE', '/api/me', { confirmPhone });
+export async function deleteAccount() {
+  await api('DELETE', '/api/me', { confirm: 'DELETE' });
   await wipeDevice();
   location.reload();
 }
@@ -1418,9 +1425,9 @@ export function formatDuration(sec: number) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-export function displayName(p: { id?: string; name?: string; phone?: string } | null | undefined) {
+export function displayName(p: { id?: string; name?: string; phone?: string; username?: string } | null | undefined) {
   const alias = p?.id ? getState().aliases[p.id] : '';
-  return alias || p?.name?.trim() || p?.phone || 'Unknown';
+  return alias || p?.name?.trim() || (p?.username ? `@${p.username}` : '') || p?.phone || 'Unknown';
 }
 
 /** Save a contact under your own name for them (only on this device). Empty removes it. */

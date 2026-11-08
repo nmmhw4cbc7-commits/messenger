@@ -8,7 +8,7 @@ import {
 import { editAvatar } from '../ui/AvatarEditor';
 import { pickFile } from './Attachments';
 import { safetyNumber } from '../lib/crypto';
-import { prettyPhone } from '../lib/phone';
+import { handleOf } from '../lib/phone';
 import { openThemePicker, themeName } from '../ui/ChatTheme';
 import { Avatar, Button, Cell, Screen, Section, Spinner, Toggle, actionSheet, confirmAction, toast, useAsync } from '../ui/components';
 import { getNav, goBack, goBackMany, useNav } from '../ui/nav';
@@ -81,7 +81,7 @@ export function ContactInfo({ convId }: { convId: string }) {
           <Avatar id={other?.id ?? conv.id} name={name} src={avatarUrl(other)} size={104} />
         )}
         <h1>{name}</h1>
-        {other && <p class="hero-sub">{prettyPhone(other.phone)}</p>}
+        {other && handleOf(other) && <p class="hero-sub">{handleOf(other)}</p>}
         {presence && <p class={`hero-presence${presence === 'online' ? ' online' : ''}`}>{presence}</p>}
         {alias && other?.name && <p class="hero-sub">Calls themselves “{other.name}”</p>}
         {other?.about && <p class="hero-about">{other.about}</p>}
@@ -242,7 +242,7 @@ export function GroupInfo({ convId }: { convId: string }) {
               key={m.id}
               icon={<Avatar id={m.id} name={displayName(m)} src={avatarUrl(m)} size={36} />}
               title={m.id === me.id ? 'You' : displayName(m)}
-              subtitle={m.about || prettyPhone(m.phone)}
+              subtitle={m.about || handleOf(m)}
               right={m.role === 'admin' ? <span class="tag">Admin</span> : undefined}
               onClick={m.id === me.id ? undefined : () => memberMenu(m)}
             />

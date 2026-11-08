@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useStore, type Profile, type Theme } from '../lib/store';
 import {
-  avatarUrl, updateProfile, uploadAvatar, removeAvatar, setTheme, signOut, deleteAccount, setPin, removePin,
+  avatarUrl, updateProfile, uploadAvatar, removeAvatar, setTheme, signOut, deleteAccount, addPasskey, passkeySupported, isPasskeyCancel,
   listBlocked, unblock, pushSupported, pushEnabled, enablePush, turnOffPush, displayName, setPushPreview,
   syncLanguage,
 } from '../lib/engine';
 import { editAvatar } from '../ui/AvatarEditor';
 import { openPhoto } from '../ui/PhotoViewer';
-import { prettyPhone, toE164 } from '../lib/phone';
-import { parsePhoneNumberFromString } from 'libphonenumber-js/min';
+import { prettyPhone, handleOf } from '../lib/phone';
 import { errorMessage } from '../lib/api';
 import { Avatar, Button, Cell, Screen, Section, Segmented, Spinner, Toggle, NavButton, actionSheet, confirmAction, toast, useAsync, Empty } from '../ui/components';
 import { goBack, useNav } from '../ui/nav';
@@ -38,14 +37,14 @@ export function SettingsTab() {
           <Avatar id={me.id} name={me.name} src={avatarUrl(me)} size={64} />
           <span class="profile-card-text">
             <strong>{me.name}</strong>
-            <span>{me.about || prettyPhone(me.phone)}</span>
+            <span>{me.about || handleOf(me)}</span>
           </span>
           <span class="profile-card-edit">Edit</span>
         </button>
       </Section>
 
       <Section header="Privacy & security" footer="With read receipts off, others don’t see when you read their messages. With last seen & online off, others don’t see when you were online, and you don’t see it for them either.">
-        <Cell icon={<Lock size={19} />} iconBg="ink" title="Registration lock" value={me.hasPin ? 'On' : 'Off'} chevron onClick={() => nav.push(<RegistrationLock />)} />
+        <Cell icon={<Lock size={19} />} iconBg="ink" title="Passkey" value={me.passkeys ? 'On' : 'Not set up'} chevron onClick={() => nav.push(<PasskeyScreen />)} />
         <Cell
           icon={<CheckDouble size={19} />}
           iconBg="ink"
@@ -98,10 +97,13 @@ function EditProfile() {
   const me = useStore((s) => s.me)!;
   const [name, setName] = useState(me.name);
   const [about, setAbout] = useState(me.about);
+  const [username, setUsername] = useState(me.username ?? '');
+  const [error, setError] = useState('');
   const [saving, runSave] = useAsync();
   const [uploading, runUpload] = useAsync();
   const fileRef = useRef<HTMLInputElement>(null);
-  const dirty = name.trim() !== me.name || about.trim() !== me.about;
+  const handle = username.trim().replace(/^@/, '').toLowerCase();
+  const dirty = name.trim() !== me.name || about.trim() !== me.about || handle !== (me.username ?? '');
 
   const photoMenu = () => {
     if (!me.avatarVersion) {
@@ -116,9 +118,9 @@ function EditProfile() {
   };
 
   const save = () => runSave(async () => {
-    await updateProfile({ name: name.trim(), about: about.trim() });
+    await updateProfile({ name: name.trim(), about: about.trim(), ...(handle !== (me.username ?? '') ? { username: handle } : {}) });
     await goBack();
-  });
+  }, (err) => setError(errorMessage(err)));
 
   return (
     <Screen back title="Profile" grouped right={<NavButton bold onClick={save} disabled={!dirty || !name.trim() || saving}>Done</NavButton>}>
@@ -133,61 +135,56 @@ function EditProfile() {
           if (file) editAvatar(file).then((blob) => blob && runUpload(() => uploadAvatar(blob)));
         }} />
       </div>
-      <Section header="Name" footer="Your name and photo are visible to people who have your number.">
+      <Section header="Name" footer="Your name and photo are visible to people you chat with.">
         <input class="cell-input" type="text" maxLength={40} value={name} aria-label="Name" onInput={(e) => setName((e.target as HTMLInputElement).value)} />
       </Section>
       <Section header="About">
         <input class="cell-input" type="text" maxLength={140} value={about} placeholder="A few words about you" aria-label="About" onInput={(e) => setAbout((e.target as HTMLInputElement).value)} />
       </Section>
-      <Section header="Phone number">
-        <Cell title={prettyPhone(me.phone)} />
+      <Section header="Username" footer="Friends can find you by your username. 3–20 letters, numbers, dots or underscores.">
+        <input class="cell-input" type="text" maxLength={21} value={username} placeholder="@username" aria-label="Username" autoCapitalize="none" autoCorrect="off" spellcheck={false}
+          onInput={(e) => { setUsername((e.target as HTMLInputElement).value.replace(/[^A-Za-z0-9_.@]/g, '')); setError(''); }} />
       </Section>
+      {error && <p class="form-error shown pad-x">{error}</p>}
+      {me.phone && (
+        <Section header="Phone number" footer="From your old sign-in. People who have it can still find you.">
+          <Cell title={prettyPhone(me.phone)} />
+        </Section>
+      )}
     </Screen>
   );
 }
 
-function RegistrationLock() {
+function PasskeyScreen() {
   const me = useStore((s) => s.me)!;
-  const [pin, setPinValue] = useState('');
-  const [confirm, setConfirm] = useState('');
   const [busy, run] = useAsync();
-
-  if (me.hasPin) {
-    return (
-      <Screen back title="Registration lock" grouped>
-        <div class="feature-hero">
-          <span class="feature-icon on"><Lock size={30} /></span>
-          <h2>Registration lock is on</h2>
-          <p>Signing in to your number on a new device needs your PIN, even with the SMS code. This protects you if someone takes over your phone number.</p>
-        </div>
-        <Section header="Turn off" footer="Enter your current PIN to turn the lock off.">
-          <input class="cell-input" type="password" inputMode="numeric" pattern="[0-9]*" maxLength={12} placeholder="Current PIN" aria-label="Current PIN" value={pin}
-            onInput={(e) => setPinValue((e.target as HTMLInputElement).value.replace(/\D/g, ''))} />
-        </Section>
-        <div class="pad-x">
-          <Button variant="danger" disabled={pin.length < 4} loading={busy} onClick={() => run(async () => { await removePin(pin); setPinValue(''); toast('Registration lock turned off'); })}>Turn off</Button>
-        </div>
-      </Screen>
-    );
-  }
-
-  const valid = pin.length >= 4 && pin === confirm;
+  const add = () => {
+    if (!passkeySupported()) return toast('This browser can’t use passkeys. On iPhone, update to iOS 16 or newer.', 'error');
+    run(async () => {
+      try {
+        await addPasskey();
+        toast('Passkey saved');
+      } catch (err) {
+        if (!isPasskeyCancel(err)) toast(errorMessage(err), 'error');
+      }
+    });
+  };
   return (
-    <Screen back title="Registration lock" grouped>
+    <Screen back title="Passkey" grouped>
       <div class="feature-hero">
-        <span class="feature-icon"><Lock size={30} /></span>
-        <h2>Protect your number</h2>
-        <p>With a PIN, nobody can register your number on another device, even if they receive your SMS codes. The lock ends after 7 days without activity, so you can’t be locked out forever.</p>
+        <span class={`feature-icon${me.passkeys ? ' on' : ''}`}><Key size={30} /></span>
+        <h2>{me.passkeys ? 'Your account has a passkey' : 'Secure your account'}</h2>
+        <p>{me.passkeys
+          ? 'You sign in with Face ID, Touch ID or your device code. The passkey is stored in your iCloud Keychain or Google Password Manager, so it also works on a new phone.'
+          : 'Without a passkey you can’t sign in again if you are signed out or get a new phone. It takes one tap with Face ID.'}</p>
       </div>
-      <Section header="Choose a PIN" footer="4 to 12 digits. Don’t use your phone’s unlock code.">
-        <input class="cell-input" type="password" inputMode="numeric" pattern="[0-9]*" maxLength={12} placeholder="New PIN" aria-label="New PIN" value={pin}
-          onInput={(e) => setPinValue((e.target as HTMLInputElement).value.replace(/\D/g, ''))} />
-        <input class="cell-input" type="password" inputMode="numeric" pattern="[0-9]*" maxLength={12} placeholder="Repeat PIN" aria-label="Repeat PIN" value={confirm}
-          onInput={(e) => setConfirm((e.target as HTMLInputElement).value.replace(/\D/g, ''))} />
-      </Section>
-      {confirm.length >= 4 && pin !== confirm && <p class="form-error shown pad-x">The PINs don’t match.</p>}
+      {!!me.passkeys && (
+        <Section footer="Add another one, for example if you also use an Android phone or a second Apple account.">
+          <Cell title="Passkeys on this account" value={String(me.passkeys)} />
+        </Section>
+      )}
       <div class="pad-x">
-        <Button disabled={!valid} loading={busy} onClick={() => run(async () => { await setPin(pin); setPinValue(''); setConfirm(''); toast('Registration lock is on'); })}>Turn on</Button>
+        <Button variant={me.passkeys ? 'secondary' : 'primary'} loading={busy} onClick={add}>{me.passkeys ? 'Add another passkey' : 'Create passkey'}</Button>
       </div>
     </Screen>
   );
@@ -217,7 +214,7 @@ function BlockedPeople() {
               key={p.id}
               icon={<Avatar id={p.id} name={displayName(p)} src={avatarUrl(p)} size={36} />}
               title={displayName(p)}
-              subtitle={prettyPhone(p.phone)}
+              subtitle={handleOf(p)}
               right={<button class="small-button" onClick={() => run(async () => { await unblock(p.id); setList((l) => l!.filter((x) => x.id !== p.id)); toast('Unblocked'); })}>Unblock</button>}
             />
           ))}
@@ -276,8 +273,8 @@ function SecurityInfo() {
     ['Signed messages', 'Every message is signed by its sender. Haven checks the signature before showing a message, so the server can’t forge or alter one.'],
     ['Safety numbers', 'If a contact’s keys change, you’ll see a notice in the chat. Verify the safety number in person to rule out anyone listening in.'],
     ['Delete after delivery', 'The server only holds encrypted messages until they are delivered, at most 30 days. Your chat history lives on your device.'],
-    ['Minimal metadata', 'The server knows your phone number, name, photo and who is in which chat, because it needs them to deliver messages. It never sees message content.'],
-    ['Registration lock', 'An optional PIN stops anyone who takes over your phone number from registering it on another device.'],
+    ['Minimal metadata', 'The server knows your name, username, photo and who is in which chat, because it needs them to deliver messages. No phone number is needed. It never sees message content.'],
+    ['Passkey sign-in', 'Your account is protected by a passkey. Signing in needs Face ID, Touch ID or your device code; there is no password or SMS code anyone could steal.'],
   ];
   return (
     <Screen back title="Security" grouped>
@@ -298,11 +295,7 @@ function SecurityInfo() {
 }
 
 function DeleteAccount() {
-  const me = useStore((s) => s.me)!;
-  const [phone, setPhone] = useState('');
   const [busy, run] = useAsync();
-  const region = parsePhoneNumberFromString(me.phone)?.country ?? 'DE';
-  const confirmed = toE164(phone, region);
   return (
     <Screen back title="Delete account" grouped>
       <div class="feature-hero">
@@ -310,13 +303,10 @@ function DeleteAccount() {
         <h2>Delete your account</h2>
         <p>Your profile, photo and undelivered messages are deleted from the server, you leave all groups, and everything on this device is erased. This can’t be undone.</p>
       </div>
-      <Section header="Confirm with your phone number" footer={`Enter ${prettyPhone(me.phone)} to confirm.`}>
-        <input class="cell-input" type="tel" inputMode="tel" placeholder="Your phone number" aria-label="Your phone number" value={phone} onInput={(e) => setPhone((e.target as HTMLInputElement).value)} />
-      </Section>
       <div class="pad-x">
-        <Button variant="danger" disabled={confirmed !== me.phone} loading={busy} onClick={async () => {
+        <Button variant="danger" loading={busy} onClick={async () => {
           if (await confirmAction({ message: 'Delete your account permanently?', confirm: 'Delete account', danger: true })) {
-            run(() => deleteAccount(me.phone));
+            run(() => deleteAccount());
           }
         }}>Delete account</Button>
       </div>

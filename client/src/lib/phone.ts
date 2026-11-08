@@ -43,3 +43,10 @@ export function prettyPhone(e164: string) {
   const parsed = parsePhoneNumberFromString(e164);
   return parsed ? parsed.formatInternational() : e164;
 }
+
+/** How to show who someone is: @username, else the phone number of an older account. */
+export function handleOf(p: { phone?: string | null; username?: string | null } | null | undefined) {
+  if (!p) return '';
+  if (p.username) return `@${p.username}`;
+  return p.phone ? prettyPhone(p.phone) : '';
+}

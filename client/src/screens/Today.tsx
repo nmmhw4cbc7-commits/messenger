@@ -495,7 +495,7 @@ function CircleSetup({ close }: { close: () => Promise<void> }) {
         <div class="sheet-content">
           <input class="field" type="text" maxLength={60} value={name} aria-label="Group name" placeholder="Group name" onInput={(e) => setName((e.target as HTMLInputElement).value)} />
           <Button onClick={() => setStep('pick')} disabled={!name.trim()}>Choose friends</Button>
-          <p class="fine-print">Friends who aren’t on Haven yet can be invited by their number. You can add more people any time.</p>
+          <p class="fine-print">Friends who aren’t on Haven yet can join with the invite link. You can add more people any time.</p>
           <Button variant="plain" onClick={async () => { await close(); openJoinSheet(); }}>I already have a friend group</Button>
         </div>
       </div>
