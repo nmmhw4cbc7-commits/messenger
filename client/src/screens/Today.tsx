@@ -642,7 +642,6 @@ function GroupSwitch() {
   return (
     <button class="group-switch" onClick={openGroupSheet} aria-label={current ? `Friend group: ${current.title}. Switch or add` : 'Add a friend group'}>
       {current ? <span class="group-switch-name">{current.title}</span> : <PersonAdd size={18} />}
-      {groups.length > 1 && <span class="group-switch-count">{groups.length}</span>}
       <ChevronDown size={16} />
     </button>
   );
