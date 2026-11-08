@@ -3,9 +3,11 @@ import { memo } from 'preact/compat';
 import { getState, useStore, type Conv, type Msg } from '../lib/store';
 import { chatAvatarUrl, convTitle, displayName, otherMember, deleteChat, markRead, summarize, typingLabel } from '../lib/engine';
 import { formatListTime } from '../lib/format';
+import { t } from '../lib/i18n';
 import { Avatar, Empty, NavButton, Screen, Spinner, actionSheet, confirmAction } from '../ui/components';
 import { Chats, Compose, Gear, Lock, Search, Clock, Alert, Check, Trash } from '../ui/icons';
-import { useNav } from '../ui/nav';
+import { openLayers, useNav } from '../ui/nav';
+import { maybeShowWhatsNew } from './Guide';
 import { ChatScreen } from './Chat';
 import { NewChatSheet } from './NewChat';
 import { SettingsTab } from './Settings';
@@ -19,9 +21,36 @@ const ChatsPane = memo(() => <ChatsTab />);
 const SettingsPane = memo(() => <SettingsTab />);
 
 import { checkBackupOnStart } from './Backup';
+
+const PLACE_KEY = 'haven.place';
+/** Where the user was within the last 30 minutes, if anywhere. */
+function restoredPlace(): { tab: 'today' | 'chats' | 'settings'; chat: string | null } | null {
+  try {
+    const p = JSON.parse(localStorage.getItem(PLACE_KEY) || 'null');
+    if (!p || Date.now() - p.at > 30 * 60_000) return null;
+    return { tab: ['today', 'chats', 'settings'].includes(p.tab) ? p.tab : 'today', chat: typeof p.chat === 'string' ? p.chat : null };
+  } catch {
+    return null;
+  }
+}
 export function Home() {
   const nav = useNav();
-  const [tab, setTab] = useState<'today' | 'chats' | 'settings'>('today');
+  const [tab, setTab] = useState<'today' | 'chats' | 'settings'>(() => restoredPlace()?.tab ?? 'today');
+  const openConvId = useStore((s) => s.openConvId);
+
+  // iOS may close the app in the background; it then starts fresh. Remember where
+  // the user was (tab and open chat) so coming back doesn't land on the start page.
+  useEffect(() => {
+    try { localStorage.setItem(PLACE_KEY, JSON.stringify({ tab, chat: openConvId ?? null, at: Date.now() })); } catch { /* fine */ }
+  }, [tab, openConvId]);
+  useEffect(() => {
+    const save = () => {
+      if (document.visibilityState !== 'hidden') return;
+      try { localStorage.setItem(PLACE_KEY, JSON.stringify({ tab, chat: getState().openConvId ?? null, at: Date.now() })); } catch { /* fine */ }
+    };
+    document.addEventListener('visibilitychange', save);
+    return () => document.removeEventListener('visibilitychange', save);
+  }, [tab]);
 
   // Tapping a notification opens that chat.
   useEffect(() => {
@@ -45,13 +74,18 @@ export function Home() {
     if (fromUrl || screenFromUrl) history.replaceState(history.state, '', '/');
     if (fromUrl) open(fromUrl);
     else if (screenFromUrl) openScreen(screenFromUrl);
+    else {
+      const place = restoredPlace();
+      if (place?.chat && getState().convs[place.chat]) nav.push(<ChatScreen convId={place.chat} />);
+    }
     const onMessage = (e: MessageEvent) => {
       if (e.data?.type === 'open-chat' && typeof e.data.convId === 'string') open(e.data.convId);
       if (e.data?.type === 'open-screen' && typeof e.data.screen === 'string') openScreen(e.data.screen);
     };
     navigator.serviceWorker?.addEventListener('message', onMessage);
-    const t = setTimeout(() => checkBackupOnStart(), 1500);
-    return () => { clearTimeout(t); navigator.serviceWorker?.removeEventListener('message', onMessage); };
+    // After an update: what's new. Otherwise (or later) the backup offer, never on top of another sheet.
+    const timer = setTimeout(() => { if (openLayers() === 0 && !maybeShowWhatsNew()) checkBackupOnStart(); }, 1800);
+    return () => { clearTimeout(timer); navigator.serviceWorker?.removeEventListener('message', onMessage); };
   }, []);
   const unread = useStore((s) => Object.values(s.convs).reduce((n, c) => n + (c.hidden ? 0 : c.unread), 0));
   const myTurn = useStore((s) => Boolean(s.circle?.id && s.me && s.circle.picks.some((p) => p.day === s.circle!.today && p.userId === s.me!.id)));
@@ -144,12 +178,14 @@ function ChatsTab() {
   );
 }
 
+// The preview shows people's words, so it is translated here and not on screen.
 function preview(m: Msg | null, conv: Conv, meId: string | undefined) {
-  if (!m) return conv.kind === 'group' ? 'Group created' : 'Say hello';
-  if (m.kind === 'system') return describeSystem(m, conv, meId);
-  if (m.kind === 'undecryptable') return 'Message could not be decrypted';
-  const prefix = m.senderId === meId ? 'You: ' : conv.kind === 'group' ? `${displayName(conv.members.find((x) => x.id === m.senderId)).split(' ')[0]}: ` : '';
-  return prefix + summarize(m).replace(/\s+/g, ' ');
+  if (!m) return t(conv.kind === 'group' ? 'Group created' : 'Say hello');
+  if (m.kind === 'system' || m.kind === 'notice') return t(describeSystem(m, conv, meId));
+  if (m.kind === 'undecryptable') return t('Message could not be decrypted');
+  const prefix = m.senderId === meId ? t('You: ') : conv.kind === 'group' ? `${displayName(conv.members.find((x) => x.id === m.senderId)).split(' ')[0]}: ` : '';
+  const text = summarize(m).replace(/\s+/g, ' ');
+  return prefix + (m.kind === 'text' && !m.deleted ? text : t(text));
 }
 
 // Only one row can be swiped open at a time.
@@ -276,7 +312,7 @@ function ChatRow({ conv, meId, onOpen }: { conv: Conv; meId?: string; onOpen: ()
               {typingNow ? typingNow : <>
               {last?.senderId === meId && last?.status === 'pending' && <Clock size={14} class="inline-icon" />}
               {last?.senderId === meId && last?.status === 'failed' && <Alert size={14} class="inline-icon danger" />}
-              {conv.left ? 'You are no longer a member' : preview(last, conv, meId)}
+              {conv.left ? t('You are no longer a member') : preview(last, conv, meId)}
               </>}
             </span>
             {conv.unread > 0 && <span class="unread-badge">{conv.unread > 99 ? '99+' : conv.unread}</span>}

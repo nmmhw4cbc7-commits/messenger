@@ -356,11 +356,45 @@ async function sendPendingAnnouncement() {
   await pushTo(subs, payload);
 }
 
-/** A visible notification with a fixed text (no message content) for these users' devices. */
-async function notifyUsers(userIds: string[], title: string, body: string, open?: string) {
+type Lang = 'en' | 'de';
+type Text = Record<Lang, string>;
+
+/** Fixed notification texts in English and German; {name} is filled in. */
+const NOTE: Record<string, { title: Text; body: Text }> = {
+  yourTurn: {
+    title: { en: 'It’s your turn today! 🎬', de: 'Heute bist du dran! 🎬' },
+    body: { en: 'Vlog your day for your friends: 3 videos (6 min) or 6 photos.', de: 'Vlogge deinen Tag für deine Freunde: 3 Videos (6 Min.) oder 6 Fotos.' },
+  },
+  vlogsToday: {
+    title: { en: '{name} vlogs today', de: '{name} vloggt heute' },
+    body: { en: 'Follow their day in Vlog your Day.', de: 'Verfolge den Tag in Vlog your Day.' },
+  },
+  remind: {
+    title: { en: 'Have you vlogged today? 🎬', de: 'Hast du heute schon gevloggt? 🎬' },
+    body: { en: 'Your friends are waiting for your day. You can still post until midnight.', de: 'Deine Freunde warten auf deinen Tag. Du kannst noch bis Mitternacht posten.' },
+  },
+  joined: {
+    title: { en: '{name} joined your friend group 👋', de: '{name} ist deiner Freundesgruppe beigetreten 👋' },
+    body: { en: 'Say hi on the Today screen.', de: 'Sag Hallo auf der Heute-Seite.' },
+  },
+  vlogged: {
+    title: { en: '{name} just vlogged 🎬', de: '{name} hat gerade gevloggt 🎬' },
+    body: { en: 'See their day in Vlog your Day.', de: 'Sieh dir den Tag in Vlog your Day an.' },
+  },
+};
+
+/** A visible notification with a fixed text (no message content), in each user's language. */
+async function notifyUsers(userIds: string[], key: keyof typeof NOTE, name = '', open?: string) {
   if (!userIds.length) return;
-  const subs = await sql`select endpoint, p256dh, auth from haven.push_subscriptions where user_id = any(${userIds})`;
-  await pushTo(subs, JSON.stringify({ t: 'announce', title, body, open }));
+  const subs = await sql`select s.endpoint, s.p256dh, s.auth, u.lang from haven.push_subscriptions s join haven.users u on u.id = s.user_id
+                         where s.user_id = any(${userIds})`;
+  const note = NOTE[key];
+  for (const lang of ['en', 'de'] as Lang[]) {
+    const group = subs.filter((x) => (x.lang === 'de' ? 'de' : 'en') === lang);
+    if (!group.length) continue;
+    const fill = (t: string) => t.replace('{name}', name || (lang === 'de' ? 'Ein Freund' : 'A friend'));
+    await pushTo(group, JSON.stringify({ t: 'announce', title: fill(note.title[lang]), body: fill(note.body[lang]), open }));
+  }
 }
 
 async function pushTo(subs: Row[], payload: string) {
@@ -423,8 +457,8 @@ async function announcePick(convId: string, day: string, hour: number) {
   if (!row) return;
   const [picked] = await sql`select name from haven.users where id = ${row.user_id}`;
   const others = (await memberIds(convId)).filter((id) => id !== row.user_id);
-  await notifyUsers([row.user_id], 'It’s your turn today! 🎬', 'Vlog your day for your friends: 3 videos (6 min) or 6 photos.', 'today');
-  await notifyUsers(others, `${picked?.name || 'A friend'} vlogs today`, 'Follow their day in Vlog your Day.', 'today');
+  await notifyUsers([row.user_id], 'yourTurn', '', 'today');
+  await notifyUsers(others, 'vlogsToday', picked?.name || '', 'today');
   await broadcast([row.user_id, ...others], 'conversations');
 }
 
@@ -434,7 +468,7 @@ async function remindPick(convId: string, day: string, hour: number) {
   const [row] = await sql`update haven.circle_days set reminded = true
                           where conversation_id = ${convId} and day = ${day} and not reminded and posted_at = 0 returning user_id`;
   if (!row) return;
-  await notifyUsers([row.user_id], 'Have you vlogged today? 🎬', 'Your friends are waiting for your day. You can still post until midnight.', 'today');
+  await notifyUsers([row.user_id], 'remind', '', 'today');
 }
 
 async function circleTick() {
@@ -1037,9 +1071,14 @@ route('GET', '/me', async ({ req, reply }) => ({ me: await meOf(await currentUse
 
 route('PATCH', '/me', async ({ req, reply, body }) => {
   const user = await currentUser(req, reply);
-  const b = shape<{ name?: string; about?: string; readReceipts?: boolean; presence?: boolean }>(body, {
+  const b = shape<{ name?: string; about?: string; readReceipts?: boolean; presence?: boolean; lang?: string }>(body, {
     name: [str(0, 200), false], about: [str(0, 500), false], readReceipts: [(v) => typeof v === 'boolean', false], presence: [(v) => typeof v === 'boolean', false],
+    lang: [(v) => v === 'en' || v === 'de', false],
   });
+  if (b.lang !== undefined) {
+    await sql`update haven.users set lang = ${b.lang} where id = ${user.id}`;
+    if (Object.keys(b).length === 1) return { me: await meOf(user) };
+  }
   if (b.readReceipts !== undefined) await sql`update haven.users set read_receipts = ${b.readReceipts} where id = ${user.id}`;
   // Turning "last seen & online" off also forgets when this user was last seen.
   if (b.presence !== undefined) {
@@ -1385,27 +1424,59 @@ route('POST', '/circle', async ({ req, reply, body }) => {
   return { conversation: await oneConversation(id, user.id), skipped };
 });
 
-// Invite links: anyone in a friend group can share one; it is valid for 14 days.
-route('POST', '/circle/invite', async ({ req, reply }) => {
+// Invite link: one fixed link per friend group. Anyone in the group can share it;
+// admins can replace it (the old link stops working).
+route('POST', '/circle/invite', async ({ req, reply, body }) => {
   const user = await currentUser(req, reply);
+  const { reset } = shape<{ reset?: boolean }>(body, { reset: [(v) => v === true, false] });
   const convId = await circleOf(user.id);
   if (!convId) throw new HttpError(400, 'no_circle', 'Create a friend group first.');
-  await enforce(`invite:${user.id}`, 30, HOUR);
-  const code = newLinkCode();
-  const t = now();
-  await sql`delete from haven.circle_invites where expires_at < ${t}`;
-  await sql`insert into haven.circle_invites (code_hash, conversation_id, created_by, expires_at, created_at)
-            values (${sha256(code)}, ${convId}, ${user.id}, ${t + 14 * DAY}, ${t})`;
-  return { code, expiresAt: t + 14 * DAY };
+  await enforce(`invite:${user.id}`, 60, HOUR);
+  const conv = await membershipOrThrow(convId, user.id);
+  if (reset && conv.my_role !== 'admin') throw new HttpError(403, 'forbidden', 'Only admins can make a new link.');
+  if (conv.invite_code && !reset) return { code: conv.invite_code };
+  for (let i = 0; i < 5; i++) {
+    const code = newLinkCode();
+    const done = await sql`update haven.conversations set invite_code = ${code} where id = ${convId}
+                           and not exists (select 1 from haven.conversations where invite_code = ${code}) returning id`;
+    if (done.length) return { code };
+  }
+  throw new HttpError(500, 'server_error');
 });
+
+/** Which friend group an invite code belongs to: a fixed link, or an older 14-day code. */
+async function circleByCode(code: string): Promise<Row | null> {
+  const [c] = await sql`select c.id, c.title, c.created_by from haven.conversations c where c.circle and c.invite_code = ${code}`;
+  if (c) return c;
+  const [old] = await sql`select c.id, c.title, c.created_by from haven.circle_invites i join haven.conversations c on c.id = i.conversation_id and c.circle
+                          where i.code_hash = ${sha256(code)} and i.expires_at > ${now()}`;
+  return old ?? null;
+}
+
+// Before joining: show "Join „Name“ by „Creator“?". Works before signing in too.
+route('POST', '/circle/invite/preview', async ({ req, body, ip }) => {
+  const { code } = shape<{ code: string }>(body, { code: [str(12, 12, LINK_CODE), true] });
+  await enforce(`invitepreview:${ip}`, 60, HOUR);
+  const c = await circleByCode(code);
+  if (!c) throw new HttpError(404, 'invite_invalid', 'This invite link is not valid anymore. Ask for a new one.');
+  const [creator] = await sql`select name from haven.users where id = ${c.created_by}`;
+  const [{ n }] = await sql`select count(*)::int as n from haven.members where conversation_id = ${c.id}`;
+  let member = false;
+  const token = readCookie(req, COOKIE);
+  if (token) {
+    const [s] = await sql`select user_id from haven.sessions where token_hash = ${sha256(token)} and expires_at > ${now()}`;
+    if (s) member = Boolean((await sql`select 1 from haven.members where conversation_id = ${c.id} and user_id = ${s.user_id}`).length);
+  }
+  return { title: c.title, creator: creator?.name || '', members: n, member };
+}, false);
 
 route('POST', '/circle/join', async ({ req, reply, body }) => {
   const user = await currentUser(req, reply);
   const { code } = shape<{ code: string }>(body, { code: [str(12, 12, LINK_CODE), true] });
   await enforce(`join:${user.id}`, 20, HOUR);
-  const invalid = new HttpError(400, 'invite_invalid', 'This invite is not valid or has expired. Ask for a new one.');
-  const [inv] = await sql`select i.conversation_id, i.created_by from haven.circle_invites i join haven.conversations c on c.id = i.conversation_id and c.circle
-                          where i.code_hash = ${sha256(code)} and i.expires_at > ${now()}`;
+  const invalid = new HttpError(400, 'invite_invalid', 'This invite link is not valid anymore. Ask for a new one.');
+  const c = await circleByCode(code);
+  const inv = c ? { conversation_id: c.id as string, created_by: c.created_by as string } : null;
   if (!inv || (await hasBlocked(inv.created_by, user.id))) throw invalid;
   const current = await memberIds(inv.conversation_id);
   if (current.includes(user.id)) return { conversation: await oneConversation(inv.conversation_id, user.id) };
@@ -1418,7 +1489,7 @@ route('POST', '/circle/join', async ({ req, reply, body }) => {
   });
   await broadcast([...current, user.id], 'conversations');
   await broadcast(current, 'sync');
-  await notifyUsers(current, `${user.name} joined your friend group 👋`, 'Say hi on the Today screen.', 'today');
+  await notifyUsers(current, 'joined', user.name, 'today');
   return { conversation: await oneConversation(inv.conversation_id, user.id) };
 });
 
@@ -1473,7 +1544,7 @@ route('POST', '/conversations/:id/messages', async ({ req, reply, params, body }
     if (b.vlog) {
       // "X just vlogged", at most once every 10 minutes per group.
       const [{ hit }] = await sql`select haven.hit(${`vlogpush:${conv.id}`}, 1, ${10 * MIN}) as hit`;
-      if (!(hit > 0)) await notifyUsers(others, `${user.name || 'A friend'} just vlogged 🎬`, 'See their day in Vlog your Day.', 'today');
+      if (!(hit > 0)) await notifyUsers(others, 'vlogged', user.name || '', 'today');
     } else {
       await sendPush(b.pushTo ? b.pushTo.filter((id) => others.includes(id)) : others);
     }

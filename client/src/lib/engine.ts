@@ -2,6 +2,7 @@
 // Screens call these functions and read state through useStore().
 
 import { api, ApiError, sessionEvents } from './api';
+import { currentLang } from './i18n';
 import * as idb from './idb';
 import { createIdentity, decryptMessage, encryptMessage, randomId, seal, unseal, toB64u, fromB64u, type Envelope, type Identity } from './crypto';
 import { getState, setState, type Activity, type Conv, type DeviceKey, type Me, type Member, type Msg, type Pin, type Profile, type ReplyRef, type SystemBody, type Theme } from './store';
@@ -48,6 +49,7 @@ export async function boot() {
     if (err instanceof ApiError && err.status === 401) return; // handled by the session listener
   }
   startRealtime();
+  syncLanguage().catch(() => {});
   pruneExpired().catch(() => {});
   refreshConversations().then(sync).then(() => autoResend()).catch(() => {});
   setTimeout(() => runBackup().catch(() => {}), 20_000);
@@ -1524,8 +1526,9 @@ export async function markActivitySeen() {
 
 // ------------------------------------------------------------------ friend group invites
 
-export async function createCircleInvite() {
-  return api<{ code: string; expiresAt: number }>('POST', '/api/circle/invite', {});
+/** The friend group's fixed invite code (admins can replace it with reset). */
+export async function createCircleInvite(reset = false) {
+  return api<{ code: string }>('POST', '/api/circle/invite', reset ? { reset: true } : {});
 }
 
 export async function joinCircle(code: string) {
@@ -1572,6 +1575,16 @@ export async function deleteForEveryone(msg: Msg) {
   if (msg.media) await forgetFile(msg.id);
   await updateMessage(deletedCopy(msg));
   if (path) api('POST', '/api/attachments/delete', { path }).catch(() => {});
+}
+
+// ------------------------------------------------------------------ language for notifications
+
+/** The server writes friend group notifications in this language. */
+export async function syncLanguage() {
+  const lang = currentLang();
+  if ((await idb.get<string>('meta', 'langSent').catch(() => undefined)) === lang) return;
+  await api('PATCH', '/api/me', { lang });
+  await idb.put('meta', lang, 'langSent');
 }
 
 // ------------------------------------------------------------------ history re-delivery

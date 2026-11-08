@@ -11,7 +11,6 @@ import {
   react, refreshCircle, sendMedia, vlogPosts, vlogUsage, VLOG_LIMITS,
 } from '../lib/engine';
 import { formatListTime } from '../lib/format';
-import { prettyPhone } from '../lib/phone';
 import { compressVideo, MAX_FILE, preparePhoto, prepareVideo } from '../lib/media';
 import { errorMessage } from '../lib/api';
 import { Avatar, Button, Screen, Spinner, actionSheet, confirmAction, toast, useAsync } from '../ui/components';
@@ -20,6 +19,8 @@ import { Bell, Camera, ChevronRight, PersonAdd, Chats as ChatIcon, Close, Share,
 import { PeoplePicker } from './NewChat';
 import { ChatScreen } from './Chat';
 import { openViewer, pickFile, useMediaUrl } from './Attachments';
+import { markWhatsNewSeen, openGuide } from './Guide';
+import { clearJoin, codeFrom, inviteUrl, pendingJoin, previewInvite, type InvitePreview } from '../lib/invite';
 
 export const VlogIcon = ({ size = 26 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -28,23 +29,12 @@ export const VlogIcon = ({ size = 26 }: { size?: number }) => (
 );
 
 const SETUP_FLAG = 'haven-circle-intro';
-const JOIN_KEY = 'haven-join';
-const cleanCode = (v: string) => v.toUpperCase().replace(/[^A-Z2-9]/g, '').slice(0, 12);
-const prettyCode = (code: string) => code.replace(/(.{4})(?=.)/g, '$1 ');
-
-// An invite link (https://…/?join=CODE) is remembered until the user is signed in.
-(() => {
-  const params = new URLSearchParams(location.search);
-  const code = params.get('join');
-  if (!code) return;
-  try { localStorage.setItem(JOIN_KEY, cleanCode(code)); } catch { /* private mode */ }
-  params.delete('join');
-  history.replaceState(history.state, '', location.pathname + (params.toString() ? `?${params}` : ''));
-})();
-const pendingJoin = () => { try { return localStorage.getItem(JOIN_KEY) || ''; } catch { return ''; } };
-const clearJoin = () => { try { localStorage.removeItem(JOIN_KEY); } catch { /* ignore */ } };
 /** Remember to offer the friend group setup right after creating a profile. */
-export const offerCircleSetup = () => { try { localStorage.setItem(SETUP_FLAG, '1'); } catch { /* private mode */ } };
+export const offerCircleSetup = () => {
+  try { localStorage.setItem(SETUP_FLAG, '1'); localStorage.setItem(GUIDE_FLAG, '1'); } catch { /* private mode */ }
+  markWhatsNewSeen(); // brand-new users get the guide instead
+};
+const GUIDE_FLAG = 'haven.guidePending';
 
 const dayLabel = (day: string, today: string) => {
   if (day === today) return 'Today';
@@ -71,16 +61,30 @@ export function TodayTab() {
   // Opened an invite link: join that friend group. Right after sign-up otherwise: offer the setup once.
   useEffect(() => {
     if (!circle) return;
-    const code = pendingJoin();
     let flagged = false;
-    try { flagged = localStorage.getItem(SETUP_FLAG) === '1'; localStorage.removeItem(SETUP_FLAG); } catch { /* ignore */ }
-    if (code.length === 12) {
-      clearJoin();
-      if (circle.id) return;
-      joinCircle(code).then((c) => toast(`You joined “${c.title}”`), (err) => { toast(errorMessage(err), 'error'); openJoinSheet(code); });
-      return;
+    let guide = false;
+    try {
+      flagged = localStorage.getItem(SETUP_FLAG) === '1';
+      guide = localStorage.getItem(GUIDE_FLAG) === '1';
+      localStorage.removeItem(SETUP_FLAG);
+      localStorage.removeItem(GUIDE_FLAG);
+    } catch { /* ignore */ }
+    const next = () => {
+      const code = pendingJoin();
+      if (code.length === 12) {
+        clearJoin();
+        openJoinConfirm(code);
+        return;
+      }
+      if (flagged && !circle.id) openCircleSetup();
+    };
+    // Brand-new users: a short guide first, then joining or setting up the group.
+    if (guide) {
+      markWhatsNewSeen();
+      openGuide(next);
+    } else {
+      next();
     }
-    if (flagged && !circle.id) openCircleSetup();
   }, [circle?.id, circle === null]);
 
   if (!circle) {
@@ -149,7 +153,7 @@ export function TodayTab() {
         {conv.members.map((m) => (
           <div key={m.id} class="vlog-friend">
             <Avatar id={m.id} name={displayName(m)} src={avatarUrl(m)} size={48} />
-            <span>{m.id === me?.id ? 'You' : firstName(m)}</span>
+            <span class={m.id === me?.id ? '' : 'friend-name'}>{m.id === me?.id ? 'You' : firstName(m)}</span>
           </div>
         ))}
         <button class="vlog-friend add" onClick={() => inviteToCircle(conv)} aria-label="Invite friends">
@@ -508,18 +512,24 @@ export function inviteToCircle(conv: Conv) {
 }
 
 function InviteLinkSheet({ close }: { close: () => Promise<void> }) {
+  const conv = useStore((s) => (s.circle?.id ? s.convs[s.circle.id] : undefined));
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
+  const [busy, run] = useAsync();
   useEffect(() => { createCircleInvite().then((r) => setCode(r.code), (err) => setError(errorMessage(err))); }, []);
-  const url = code ? `${location.origin}/?join=${code}` : '';
-  const text = `Join my friend group on Haven. Every day one of us vlogs their day. ${url}\nInvite code: ${prettyCode(code)}`;
+  const url = code ? inviteUrl(code) : '';
+  const text = `Join our friend group “${conv?.title ?? 'Friends'}” on Haven. Every day one of us vlogs their day. ${url}`;
   const share = async () => {
     if (navigator.share) {
       try { await navigator.share({ title: 'Haven', text }); return; } catch (err) { if ((err as Error).name === 'AbortError') return; }
     }
     copy();
   };
-  const copy = () => navigator.clipboard.writeText(text).then(() => toast('Invite copied'), () => toast('Could not copy', 'error'));
+  const copy = () => navigator.clipboard.writeText(url).then(() => toast('Link copied'), () => toast('Could not copy', 'error'));
+  const renew = async () => {
+    if (!(await confirmAction({ title: 'Make a new link?', message: 'The current link stops working. People who already joined stay in the group.', confirm: 'New link' }))) return;
+    run(async () => { setCode((await createCircleInvite(true)).code); toast('New link ready'); });
+  };
   return (
     <div class="sheet-page">
       <div class="sheet-header sheet-drag">
@@ -528,56 +538,99 @@ function InviteLinkSheet({ close }: { close: () => Promise<void> }) {
         <button class="nav-button bold" onClick={() => close()}>Done</button>
       </div>
       <div class="sheet-content">
-        <p class="muted">Anyone with this link or code can join your friend group for the next 14 days. Only send it to friends.</p>
+        <p class="muted">{`Everyone who opens this link can join “${conv?.title ?? 'Friends'}”. It’s the same link for everyone, so send it to all your friends – but only to them.`}</p>
         <div class="invite-code-box">
-          {code ? <span class="pair-code">{prettyCode(code)}</span> : error ? <span class="form-error shown">{error}</span> : <Spinner />}
+          {code ? <span class="invite-url">{url.replace(/^https?:\/\//, '')}</span> : error ? <span class="form-error shown">{error}</span> : <Spinner />}
         </div>
         <Button onClick={share} disabled={!code}><Share size={19} /> Share invite link</Button>
-        <Button variant="secondary" onClick={copy} disabled={!code}><Copy size={19} /> Copy</Button>
+        <Button variant="secondary" onClick={copy} disabled={!code}><Copy size={19} /> Copy link</Button>
+        {conv?.myRole === 'admin' && <Button variant="plain" onClick={renew} loading={busy} disabled={!code}>Make a new link</Button>}
       </div>
     </div>
   );
 }
 
-export function openJoinSheet(initial = '') {
-  getNav().present((close) => <JoinSheet close={close} initial={initial} />, { variant: 'card' });
+/** "Join „Friends“ by Philipp?" – after opening an invite link (or pasting it). */
+export function openJoinConfirm(code: string) {
+  getNav().present((close) => <JoinConfirmSheet close={close} code={code} />, { variant: 'card' });
 }
 
-function JoinSheet({ close, initial }: { close: () => Promise<void>; initial: string }) {
-  const me = useStore((s) => s.me);
-  const [code, setCode] = useState(cleanCode(initial));
+function JoinConfirmSheet({ close, code }: { close: () => Promise<void>; code: string }) {
+  const circle = useStore((s) => s.circle);
+  const [info, setInfo] = useState<InvitePreview | null>(null);
   const [error, setError] = useState('');
   const [busy, run] = useAsync();
+  useEffect(() => { previewInvite(code).then(setInfo, (err) => setError(errorMessage(err))); }, [code]);
+  const elsewhere = Boolean(circle?.id) && info && !info.member;
   const join = () => run(async () => {
     const c = await joinCircle(code);
     await close();
     toast(`You joined “${c.title}”`);
   }, (err) => setError(errorMessage(err)));
-  const shareNumber = async () => {
-    const text = `Add me to our friend group on Haven: ${prettyPhone(me?.phone ?? '')}`;
-    if (navigator.share) {
-      try { await navigator.share({ title: 'Haven', text }); return; } catch (err) { if ((err as Error).name === 'AbortError') return; }
+  return (
+    <div class="sheet-page">
+      <div class="sheet-header sheet-drag">
+        <button class="nav-button" onClick={() => close()}>Not now</button>
+        <strong>Invitation</strong>
+        <span />
+      </div>
+      <div class="sheet-content join-confirm">
+        {!info && !error && <div class="center pad"><Spinner /></div>}
+        {error && !info && <p class="form-error shown">{error}</p>}
+        {info && (
+          <>
+            <span class="vlog-intro-icon"><VlogIcon size={34} /></span>
+            <h2>{`Join “${info.title}”?`}</h2>
+            <p class="muted">{info.creator ? <><strong>{info.creator}</strong> created this friend group. </> : ''}{info.members} {info.members === 1 ? 'member' : 'members'}. Every day one of you vlogs their day.</p>
+            {info.member ? (
+              <Button onClick={() => close()}>You’re already in this group</Button>
+            ) : elsewhere ? (
+              <p class="notice-text">You’re already in another friend group. For now you can be in one group at a time.</p>
+            ) : (
+              <Button onClick={join} loading={busy}>{`Join “${info.title}”`}</Button>
+            )}
+            {error && <p class="form-error shown">{error}</p>}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** "I already have a friend group": the way in is the group's invite link. */
+export function openJoinSheet() {
+  getNav().present((close) => <JoinSheet close={close} />, { variant: 'card' });
+}
+
+function JoinSheet({ close }: { close: () => Promise<void> }) {
+  const [text, setText] = useState('');
+  const code = codeFrom(text);
+  const go = async () => { if (!code) return; await close(); openJoinConfirm(code); };
+  const paste = async () => {
+    try {
+      const t = await navigator.clipboard.readText();
+      setText(t);
+      const c = codeFrom(t);
+      if (c) { await close(); openJoinConfirm(c); } else toast('No invite link on the clipboard', 'error');
+    } catch {
+      toast('Paste the link into the field', 'error');
     }
-    navigator.clipboard.writeText(text).then(() => toast('Copied'), () => {});
   };
   return (
     <div class="sheet-page">
       <div class="sheet-header sheet-drag">
         <button class="nav-button" onClick={() => close()}>Cancel</button>
-        <strong>Join a friend group</strong>
-        <button class="nav-button bold" onClick={join} disabled={code.length !== 12 || busy}>Join</button>
+        <strong>Join your friend group</strong>
+        <span />
       </div>
-      <div class="sheet-content">
-        <p class="muted">Got an invite link? Just open it. Or type the invite code a friend sent you.</p>
-        <input class="field mono-input center-text" placeholder="XXXX XXXX XXXX" aria-label="Invite code" maxLength={16} autoCapitalize="characters" autoComplete="off"
-          value={prettyCode(code)} onInput={(e) => { setCode(cleanCode((e.target as HTMLInputElement).value)); setError(''); }}
-          onKeyDown={(e) => e.key === 'Enter' && code.length === 12 && join()} />
-        <p class={`form-error${error ? ' shown' : ''}`} role="alert">{error}</p>
-        <Button onClick={join} loading={busy} disabled={code.length !== 12}>Join friend group</Button>
-        <div class="join-alt">
-          <p>No code? Someone in the group can also add you directly. Send them your number:</p>
-          <Button variant="secondary" onClick={shareNumber}><Share size={19} /> Share my number</Button>
-        </div>
+      <div class="sheet-content join-confirm">
+        <span class="vlog-intro-icon"><PersonAdd size={30} /></span>
+        <h2>Ask for the invite link</h2>
+        <p class="muted">Ask the person who created your friend group for the invite link. Open it, and you can join right away.</p>
+        <Button variant="secondary" onClick={paste}>Paste invite link</Button>
+        <input class="field" placeholder="…or paste the link here" aria-label="Invite link" autoCapitalize="off" autoComplete="off"
+          value={text} onInput={(e) => setText((e.target as HTMLInputElement).value)} onKeyDown={(e) => e.key === 'Enter' && go()} />
+        {text && <Button onClick={go} disabled={!code}>{code ? 'Continue' : 'That’s not an invite link'}</Button>}
       </div>
     </div>
   );
