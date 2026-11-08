@@ -20,6 +20,7 @@ import { PeoplePicker } from './NewChat';
 import { ChatScreen } from './Chat';
 import { openViewer, pickFile, useMediaUrl } from './Attachments';
 import { markWhatsNewSeen, openGuide } from './Guide';
+import { Faces, membersText } from './JoinInvite';
 import { clearJoin, codeFrom, inviteUrl, pendingJoin, previewInvite, type InvitePreview } from '../lib/invite';
 
 export const VlogIcon = ({ size = 26 }: { size?: number }) => (
@@ -577,9 +578,10 @@ function JoinConfirmSheet({ close, code }: { close: () => Promise<void>; code: s
         {error && !info && <p class="form-error shown">{error}</p>}
         {info && (
           <>
-            <span class="vlog-intro-icon"><VlogIcon size={34} /></span>
+            {info.people?.length ? <Faces code={code} people={info.people} total={info.members} size={56} /> : <span class="vlog-intro-icon"><VlogIcon size={34} /></span>}
             <h2>{`Join “${info.title}”?`}</h2>
-            <p class="muted">{info.creator ? <><strong>{info.creator}</strong> created this friend group. </> : ''}{info.members} {info.members === 1 ? 'member' : 'members'}. Every day one of you vlogs their day.</p>
+            <p class="join-members">{membersText(info)}</p>
+            <p class="muted">Every day one of you is picked to vlog their day.</p>
             {info.member ? (
               <Button onClick={() => close()}>You’re already in this group</Button>
             ) : (

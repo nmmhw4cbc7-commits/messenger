@@ -1,56 +1,34 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import { Button, Screen, Avatar, toast, useAsync } from '../ui/components';
 import { useNav } from '../ui/nav';
 import { LinkDeviceScreen } from './Devices';
 import { Camera } from '../ui/icons';
-import { signUpWithPasskey, signInWithPasskey, passkeySupported, isPasskeyCancel, forgetDevice, updateProfile, uploadAvatar, avatarUrl } from '../lib/engine';
+import { joinCircle, signUpWithPasskey, signInWithPasskey, passkeySupported, isPasskeyCancel, forgetDevice, updateProfile, uploadAvatar, avatarUrl } from '../lib/engine';
 import { errorMessage } from '../lib/api';
 import { useStore } from '../lib/store';
 import { editAvatar } from '../ui/AvatarEditor';
 import { offerCircleSetup } from './Today';
-import { inviteUrl, pendingJoin, previewInvite, type InvitePreview } from '../lib/invite';
-
-const standalone = () => matchMedia('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
-const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-
-/** Opened an invite link before signing up: show which group it is. */
-function WelcomeInvite() {
-  const [info, setInfo] = useState<InvitePreview | null>(null);
-  const code = pendingJoin();
-  useEffect(() => { if (code) previewInvite(code).then(setInfo, () => {}); }, [code]);
-  if (!code || !info) return null;
-  // On iPhone the link opens in Safari, but Haven runs as its own app from the Home Screen.
-  const viaSafari = isIOS && !standalone();
-  const copy = () => navigator.clipboard.writeText(inviteUrl(code)).then(() => toast('Link copied'), () => {});
-  return (
-    <div class="welcome-invite">
-      <p class="welcome-invite-label">Invitation</p>
-      <p>{`${info.creator || 'A friend'} invites you to “${info.title}”.`}{viaSafari ? '' : ` ${'Get started, and you can join right after.'}`}</p>
-      {viaSafari && (
-        <>
-          <ol class="welcome-invite-steps">
-            <li>Tap Share, then “Add to Home Screen”.</li>
-            <li>Open Haven from your Home Screen and create your account.</li>
-            <li>Tap “I already have a friend group” and paste this link.</li>
-          </ol>
-          <Button variant="secondary" onClick={copy}>Copy invite link</Button>
-        </>
-      )}
-    </div>
-  );
-}
+import { clearJoin, pendingJoin, type InvitePreview } from '../lib/invite';
+import { JoinWelcome } from './JoinInvite';
 
 export function Welcome() {
   const nav = useNav();
   const sessionEnded = useStore((s) => s.sessionEnded);
   const [error, setError] = useState('');
   const [busy, run] = useAsync();
+  const [skipInvite, setSkipInvite] = useState(false);
+  const code = pendingJoin();
 
   const signIn = () => {
     setError('');
     if (!passkeySupported()) return setError('This browser can’t use passkeys. On iPhone, update to iOS 16 or newer.');
     run(() => signInWithPasskey(), (err) => setError(isPasskeyCancel(err) ? '' : errorMessage(err)));
   };
+
+  // Opened an invite link: straight to "Join „Friends“?".
+  if (code.length === 12 && !skipInvite && !sessionEnded) {
+    return <JoinWelcome code={code} onSkip={() => setSkipInvite(true)} onCreate={(info) => nav.push(<CreateAccountScreen join={{ code, info }} />)} />;
+  }
 
   return (
     <div class="screen welcome">
@@ -67,7 +45,6 @@ export function Welcome() {
           <li><span>03</span><span><strong>Verified</strong>Compare safety numbers with the people you talk to.</span></li>
         </ul>
       </div>
-      <WelcomeInvite />
       <div class="welcome-actions">
         {error && <p class="form-error shown" role="alert">{error}</p>}
         {sessionEnded ? (
@@ -98,7 +75,7 @@ function KeyIcon({ size = 19 }: { size?: number }) {
   );
 }
 
-function CreateAccountScreen() {
+function CreateAccountScreen({ join }: { join?: { code: string; info: InvitePreview } } = {}) {
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [busy, run] = useAsync();
@@ -106,14 +83,20 @@ function CreateAccountScreen() {
     if (!name.trim()) return;
     setError('');
     if (!passkeySupported()) return setError('This browser can’t use passkeys. On iPhone, update to iOS 16 or newer.');
-    run(() => signUpWithPasskey(name.trim()), (err) => setError(isPasskeyCancel(err) ? '' : errorMessage(err)));
+    run(async () => {
+      await signUpWithPasskey(name.trim());
+      if (join) {
+        clearJoin();
+        await joinCircle(join.code).catch((err) => toast(errorMessage(err), 'error'));
+      }
+    }, (err) => setError(isPasskeyCancel(err) ? '' : errorMessage(err)));
   };
 
   return (
     <Screen back>
       <div class="form-page">
         <div class="form-icon"><KeyIcon size={28} /></div>
-        <h1 class="form-title">Create your account</h1>
+        <h1 class="form-title">{join ? `Join “${join.info.title}”` : 'Create your account'}</h1>
         <p class="form-lede">Haven protects your account with a passkey: Face ID, Touch ID or your device code. No phone number, no password.</p>
         <input
           class="field"
@@ -129,7 +112,7 @@ function CreateAccountScreen() {
         />
         <p class={`form-error${error ? ' shown' : ''}`} role="alert">{error}</p>
         <div class="form-spacer" />
-        <Button onClick={submit} loading={busy} disabled={!name.trim()}>Create passkey</Button>
+        <Button onClick={submit} loading={busy} disabled={!name.trim()}>{join ? 'Join with passkey' : 'Create passkey'}</Button>
         <p class="fine-print">The passkey is saved in your iCloud Keychain or Google Password Manager, so you can sign in on a new phone too. Haven never sees your face or fingerprint.</p>
       </div>
     </Screen>
