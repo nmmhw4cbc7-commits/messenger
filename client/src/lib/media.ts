@@ -4,6 +4,7 @@
 // is uploaded. The key travels only inside the end-to-end encrypted message,
 // so the storage server holds nothing but ciphertext.
 
+import { releaseMic, takeMic } from './mic';
 import { api } from './api';
 import { fromB64u, toB64u, type MediaPayload } from './crypto';
 import * as idb from './idb';
@@ -177,7 +178,7 @@ export async function startRecording(): Promise<Recording> {
   if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') throw new Error('Voice messages are not supported in this browser.');
   let stream: MediaStream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    stream = await takeMic();
   } catch {
     throw new Error('Haven needs microphone access to record. You can allow it in your settings.');
   }
@@ -205,7 +206,7 @@ export async function startRecording(): Promise<Recording> {
   recorder.start(250);
   const release = () => {
     clearInterval(sampler);
-    stream.getTracks().forEach((t) => t.stop());
+    releaseMic();
     ctx.close().catch(() => {});
   };
 
