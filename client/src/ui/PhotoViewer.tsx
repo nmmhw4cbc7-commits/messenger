@@ -3,6 +3,7 @@
 import { useRef } from 'preact/hooks';
 import { getNav } from './nav';
 import { Close } from './icons';
+import { ZoomImage } from './ZoomImage';
 
 export function openPhoto(src: string, name: string) {
   getNav().present((close) => <PhotoViewer src={src} name={name} close={close} />, { variant: 'editor' });
@@ -10,9 +11,10 @@ export function openPhoto(src: string, name: string) {
 
 function PhotoViewer({ src, name, close }: { src: string; name: string; close: () => Promise<void> }) {
   const ref = useRef<HTMLDivElement>(null);
+  const zoomed = useRef(false);
   const onPointerDown = (e: PointerEvent) => {
     const el = ref.current;
-    if (!el || (e.target as HTMLElement).closest('button')) return;
+    if (!el || zoomed.current || !e.isPrimary || (e.target as HTMLElement).closest('button')) return;
     const y0 = e.clientY;
     let dy = 0;
     const move = (ev: PointerEvent) => {
@@ -24,7 +26,7 @@ function PhotoViewer({ src, name, close }: { src: string; name: string; close: (
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', up);
-      if (dy > 100 || Math.abs(dy) < 6) close();
+      if (dy > 100) close();
       else {
         el.style.transform = '';
         el.style.opacity = '';
@@ -40,7 +42,7 @@ function PhotoViewer({ src, name, close }: { src: string; name: string; close: (
         <span>{name}</span>
         <button class="viewer-close" onClick={() => close()} aria-label="Close"><Close size={22} /></button>
       </div>
-      <img src={src} alt={name} draggable={false} />
+      <ZoomImage src={src} onZoomChange={(z) => { zoomed.current = z; }} />
     </div>
   );
 }

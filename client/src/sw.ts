@@ -87,6 +87,8 @@ async function preview(): Promise<{ title: string; body: string; tag: string; co
     idbGet<number>('meta', 'cursor'),
     idbGet<Record<string, string>>('meta', 'aliases'),
   ]);
+  const de = (await idbGet<string>('meta', 'langSent').catch(() => undefined)) === 'de';
+  const L = (en: string, ger: string) => (de ? ger : en);
   if (!identity || !me) return null;
   const res = await fetch(`/api/sync?after=${cursor ?? 0}&limit=100`, { credentials: 'same-origin', cache: 'no-store' });
   if (!res.ok) return null;
@@ -99,26 +101,26 @@ async function preview(): Promise<{ title: string; body: string; tag: string; co
     const result = await decryptMessage(identity, me.deviceId, m.conversationId, m.senderId, m.id, m.body as Envelope, sigs);
     if (!result.ok) continue;
     const member = conv?.members.find((x) => x.id === m.senderId);
-    const sender = aliases?.[m.senderId] || member?.name || member?.phone || 'Someone';
+    const sender = aliases?.[m.senderId] || member?.name || member?.phone || L('Someone', 'Jemand');
     const title = conv?.kind === 'group' ? `${sender} · ${conv.title}` : sender;
     const p = result.payload;
     let body: string;
     if (p.type === 'text') {
       body = p.text;
-      if (p.mentions?.includes(me.id)) return { title: `${sender} mentioned you${conv?.kind === 'group' ? ` · ${conv.title}` : ''}`, body: body.length > 180 ? `${body.slice(0, 177)}…` : body, tag: m.conversationId, convId: m.conversationId };
+      if (p.mentions?.includes(me.id)) return { title: `${sender} ${L('mentioned you', 'hat dich erwähnt')}${conv?.kind === 'group' ? ` · ${conv.title}` : ''}`, body: body.length > 180 ? `${body.slice(0, 177)}…` : body, tag: m.conversationId, convId: m.conversationId };
     }
     else if (p.type === 'reaction') {
       if (!p.emoji) continue;
       const target = await idbGet<{ media?: { vlog?: string } }>('messages', p.target).catch(() => undefined);
-      if (target?.media?.vlog) return { title: sender, body: `Reacted ${p.emoji} to your vlog`, tag: 'haven-vlog', open: 'today' };
-      body = `Reacted ${p.emoji}`;
+      if (target?.media?.vlog) return { title: sender, body: L(`Reacted ${p.emoji} to your vlog`, `Hat mit ${p.emoji} auf deinen Vlog reagiert`), tag: 'haven-vlog', open: 'today' };
+      body = L(`Reacted ${p.emoji}`, `Hat mit ${p.emoji} reagiert`);
     } else if (p.type === 'media') {
       if (p.media.vlog) continue; // announced separately as "X just vlogged"
-      body = p.media.viewOnce ? 'Photo · view once' : p.media.kind === 'voice' ? 'Voice message' : p.media.kind === 'video' ? 'Video' : 'Photo';
+      body = p.media.viewOnce ? L('Photo · view once', 'Foto · einmal ansehen') : p.media.kind === 'voice' ? L('Voice message', 'Sprachnachricht') : p.media.kind === 'video' ? 'Video' : L('Photo', 'Foto');
       if (p.media.caption && !p.media.viewOnce) body += ` · ${p.media.caption}`;
-    } else if (p.type === 'location') body = 'Location';
-    else if (p.type === 'contact') body = `Contact · ${p.name}`;
-    else if (p.type === 'poll') body = `Poll · ${p.question}`;
+    } else if (p.type === 'location') body = L('Location', 'Standort');
+    else if (p.type === 'contact') body = `${L('Contact', 'Kontakt')} · ${p.name}`;
+    else if (p.type === 'poll') body = `${L('Poll', 'Umfrage')} · ${p.question}`;
     else continue;
     return { title, body: body.length > 180 ? `${body.slice(0, 177)}…` : body, tag: m.conversationId, convId: m.conversationId };
   }
@@ -153,7 +155,7 @@ self.addEventListener('push', (event) => {
       }
     }
     await self.registration.showNotification(note?.title ?? 'Haven', {
-      body: note?.body ?? 'You have a new message',
+      body: note?.body ?? ((await idbGet<string>('meta', 'langSent').catch(() => undefined)) === 'de' ? 'Du hast eine neue Nachricht' : 'You have a new message'),
       tag: note?.tag ?? 'haven-new-message',
       icon: '/icons/icon-192.png',
       badge: '/icons/badge-96.png',

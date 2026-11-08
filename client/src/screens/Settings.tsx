@@ -3,6 +3,7 @@ import { useStore, type Profile, type Theme } from '../lib/store';
 import {
   avatarUrl, updateProfile, uploadAvatar, removeAvatar, setTheme, signOut, deleteAccount, setPin, removePin,
   listBlocked, unblock, pushSupported, pushEnabled, enablePush, turnOffPush, displayName, setPushPreview,
+  syncLanguage,
 } from '../lib/engine';
 import { editAvatar } from '../ui/AvatarEditor';
 import { openPhoto } from '../ui/PhotoViewer';
@@ -11,9 +12,10 @@ import { parsePhoneNumberFromString } from 'libphonenumber-js/min';
 import { errorMessage } from '../lib/api';
 import { Avatar, Button, Cell, Screen, Section, Segmented, Spinner, Toggle, NavButton, actionSheet, confirmAction, toast, useAsync, Empty } from '../ui/components';
 import { goBack, useNav } from '../ui/nav';
-import { Bell, Block, Camera, Lock, Logout, Moon, Shield, Trash, Info, CheckDouble, Key, Clock, Vibrate, Check, Cloud } from '../ui/icons';
+import { Bell, Block, Camera, Lock, Logout, Moon, Shield, Trash, Info, CheckDouble, Key, Clock, Vibrate, Check, Cloud, Globe } from '../ui/icons';
 import { BackupScreen } from './Backup';
 import { hapticsOn, setHaptics } from '../lib/haptics';
+import { langSetting, setLangSetting, type LangSetting } from '../lib/i18n';
 import { currentAppIcon, setAppIcon, type AppIcon } from '../lib/appIcon';
 import { DevicesScreen } from './Devices';
 
@@ -23,6 +25,13 @@ export function SettingsTab() {
   const theme = useStore((s) => s.theme);
   const [haptics, setHapticsState] = useState(hapticsOn());
   const [icon, setIcon] = useState<AppIcon>(currentAppIcon());
+  const [lang, setLang] = useState<LangSetting>(langSetting());
+  const chooseLang = async (v: LangSetting) => {
+    setLang(v);
+    setLangSetting(v);
+    await syncLanguage().catch(() => {});
+    location.reload();
+  };
   const chooseIcon = (v: AppIcon) => {
     if (v === icon) return;
     setAppIcon(v);
@@ -70,6 +79,13 @@ export function SettingsTab() {
           <span class="cell-main">
             <span class="cell-title">Appearance</span>
             <Segmented<Theme> value={theme} onChange={setTheme} options={[{ value: 'system', label: 'Auto' }, { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }]} />
+          </span>
+        </div>
+        <div class="cell cell-stacked">
+          <span class="cell-icon filled"><Globe size={19} /></span>
+          <span class="cell-main">
+            <span class="cell-title">Language</span>
+            <Segmented<LangSetting> value={lang} onChange={chooseLang} options={[{ value: 'auto', label: 'Auto' }, { value: 'en', label: 'English' }, { value: 'de', label: 'Deutsch' }]} />
           </span>
         </div>
         <Cell icon={<Vibrate size={19} />} iconBg="ink" title="Haptics" right={<Toggle label="Haptics" checked={haptics} onChange={(v) => { setHaptics(v); setHapticsState(v); }} />} />

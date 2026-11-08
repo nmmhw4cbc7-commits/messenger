@@ -1,5 +1,5 @@
 import { Component, type ComponentChildren } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useState } from 'preact/hooks';
 import { useStore } from './lib/store';
 import { Navigator, resetNavigation } from './ui/nav';
 import { Spinner } from './ui/components';
@@ -17,8 +17,10 @@ export function App() {
 function Phases() {
   const phase = useStore((s) => s.phase);
 
-  // Each phase has its own navigation stack; start it fresh.
-  useEffect(() => resetNavigation(), [phase]);
+  // Each phase has its own navigation stack; start it fresh. This must run before
+  // screens open on start (e.g. a chat from a notification), or their "back" is lost
+  // and the screen below stays blocked.
+  useLayoutEffect(() => resetNavigation(), [phase]);
 
   if (phase === 'loading') return <Booting />;
   if (phase === 'signedOut') return <Navigator key="auth" root={<Welcome />} />;

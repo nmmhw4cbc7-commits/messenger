@@ -12,6 +12,7 @@ import { PhoneField, type PhoneValue } from '../ui/PhoneField';
 import { getNav } from '../ui/nav';
 import { Camera, Close, Contacts, Lock, People, Plus, Trash, ArrowUp, Check } from '../ui/icons';
 import { invite } from './NewChat';
+import { ZoomImage } from '../ui/ZoomImage';
 import { ChatScreen } from './Chat';
 
 // ------------------------------------------------------------------ icons used only here
@@ -94,6 +95,7 @@ const HD_KEY = 'haven.photoHD';
 /** Look at the photo before sending: HD on or off, optional caption. */
 function PhotoSendSheet({ convId, file, close }: { convId: string; file: File; close: () => Promise<void> }) {
   const [hd, setHd] = useState(() => { try { return localStorage.getItem(HD_KEY) === '1'; } catch { return false; } });
+  const [once, setOnce] = useState(false);
   const [caption, setCaption] = useState('');
   const [busy, run] = useAsync();
   const [url] = useState(() => URL.createObjectURL(file));
@@ -104,9 +106,14 @@ function PhotoSendSheet({ convId, file, close }: { convId: string; file: File; c
     try { localStorage.setItem(HD_KEY, next ? '1' : '0'); } catch { /* fine */ }
   };
   const send = () => run(async () => {
-    const p = await preparePhoto(file, hd);
-    const text = caption.trim().slice(0, 1000);
-    await sendMedia(convId, p.blob, { kind: 'image', w: p.w, h: p.h, thumb: p.thumb, ...(hd ? { hd: true } : {}), ...(text ? { caption: text } : {}) });
+    if (once) {
+      const p = await preparePhoto(file);
+      await sendMedia(convId, p.blob, { kind: 'image', w: p.w, h: p.h, viewOnce: true });
+    } else {
+      const p = await preparePhoto(file, hd);
+      const text = caption.trim().slice(0, 1000);
+      await sendMedia(convId, p.blob, { kind: 'image', w: p.w, h: p.h, thumb: p.thumb, ...(hd ? { hd: true } : {}), ...(text ? { caption: text } : {}) });
+    }
     await close();
   });
   return (
@@ -114,12 +121,15 @@ function PhotoSendSheet({ convId, file, close }: { convId: string; file: File; c
       <div class="sheet-header sheet-drag">
         <button class="nav-button" onClick={() => close()}>Cancel</button>
         <strong>Photo</strong>
-        <button class={`hd-toggle${hd ? ' on' : ''}`} onClick={toggle} aria-pressed={hd} aria-label="Send in HD">HD</button>
+        <span class="photo-send-toggles">
+          <button class={`once-toggle${once ? ' on' : ''}`} onClick={() => setOnce(!once)} aria-pressed={once} aria-label="View once"><Once size={20} /></button>
+          {!once && <button class={`hd-toggle${hd ? ' on' : ''}`} onClick={toggle} aria-pressed={hd} aria-label="Send in HD">HD</button>}
+        </span>
       </div>
       <div class="photo-send-preview"><img src={url} alt="" draggable={false} /></div>
-      <p class="photo-send-note">{hd ? 'HD: full resolution. Takes longer to send and uses more data.' : 'Standard quality. Tap HD for full resolution.'}</p>
+      <p class="photo-send-note">{once ? 'View once: opens one time, then disappears.' : hd ? 'HD: full resolution. Takes longer to send and uses more data.' : 'Standard quality. Tap HD for full resolution.'}</p>
       <div class="photo-send-bar">
-        <input class="field" type="text" placeholder="Add a caption" maxLength={1000} value={caption} aria-label="Caption"
+        <input class="field" type="text" disabled={once} placeholder={once ? 'No caption for view-once photos' : 'Add a caption'} maxLength={1000} value={caption} aria-label="Caption"
           onInput={(e) => setCaption((e.target as HTMLInputElement).value)} onKeyDown={(e) => e.key === 'Enter' && send()} />
         <button class="send-button ready" onClick={send} disabled={busy} aria-label="Send">{busy ? <Spinner size={18} /> : <ArrowUp size={20} />}</button>
       </div>
@@ -133,11 +143,17 @@ function AttachSheet({ conv, close }: { conv: Conv; close: () => Promise<void> }
     await close();
     await fn();
   };
+  // Called inside the tap: starts the file picker immediately, then closes this sheet.
+  const pickThen = (start: () => Promise<File | null>) => () => {
+    const picking = start();
+    close();
+    picking.then((f) => f && sendPickedFile(conv.id, f));
+  };
 
   const options = [
-    { label: 'Photo or video', icon: <Img />, run: after(async () => { const f = await pickFile('image/*,video/*'); if (f) await sendPickedFile(conv.id, f); }) },
-    { label: 'Camera', icon: <Camera />, run: after(async () => { const f = await pickFile('image/*', true); if (f) await sendPickedFile(conv.id, f); }) },
-    { label: 'View once', icon: <Once />, run: after(async () => { const f = await pickFile('image/*'); if (f) await sendPickedFile(conv.id, f, true); }) },
+    // The picker must open right in the tap (iOS ignores it otherwise); the sheet closes meanwhile.
+    { label: 'Photo or video', icon: <Img />, run: pickThen(() => pickFile('image/*,video/*')) },
+    { label: 'Camera', icon: <Camera />, run: pickThen(() => pickFile('image/*', true)) },
     {
       label: 'Location',
       icon: <Pin />,
@@ -434,9 +450,10 @@ export function openViewer(msg: Msg, url: string, onClosed?: () => void) {
 function Viewer({ msg, url, close }: { msg: Msg; url: string; close: () => Promise<void> }) {
   const media = msg.media!;
   const ref = useRef<HTMLDivElement>(null);
+  const zoomed = useRef(false);
   const onPointerDown = (e: PointerEvent) => {
     const el = ref.current;
-    if (!el || (e.target as HTMLElement).closest('video, button')) return;
+    if (!el || zoomed.current || !e.isPrimary || (e.target as HTMLElement).closest('video, button')) return;
     const y0 = e.clientY;
     let dy = 0;
     const move = (ev: PointerEvent) => {
@@ -463,7 +480,7 @@ function Viewer({ msg, url, close }: { msg: Msg; url: string; close: () => Promi
       {media.kind === 'video' ? (
         <video src={url} controls autoPlay playsInline />
       ) : (
-        <img src={url} alt="" draggable={false} decoding="async" />
+        <ZoomImage src={url} onZoomChange={(z) => { zoomed.current = z; }} />
       )}
       {media.caption && <p class="viewer-caption">{media.caption}</p>}
     </div>

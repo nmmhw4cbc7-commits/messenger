@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { Button, Screen, Avatar, Spinner, useAsync } from '../ui/components';
+import { Button, Screen, Avatar, Spinner, toast, useAsync } from '../ui/components';
 import { PhoneField, type PhoneValue } from '../ui/PhoneField';
 import { goBack, useNav } from '../ui/nav';
 import { LinkDeviceScreen } from './Devices';
@@ -10,7 +10,38 @@ import { errorMessage } from '../lib/api';
 import { useStore } from '../lib/store';
 import { editAvatar } from '../ui/AvatarEditor';
 import { offerCircleSetup } from './Today';
+import { inviteUrl, pendingJoin, previewInvite, type InvitePreview } from '../lib/invite';
 import { parsePhoneNumberFromString } from 'libphonenumber-js/min';
+
+const standalone = () => matchMedia('(display-mode: standalone)').matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+/** Opened an invite link before signing up: show which group it is. */
+function WelcomeInvite() {
+  const [info, setInfo] = useState<InvitePreview | null>(null);
+  const code = pendingJoin();
+  useEffect(() => { if (code) previewInvite(code).then(setInfo, () => {}); }, [code]);
+  if (!code || !info) return null;
+  // On iPhone the link opens in Safari, but Haven runs as its own app from the Home Screen.
+  const viaSafari = isIOS && !standalone();
+  const copy = () => navigator.clipboard.writeText(inviteUrl(code)).then(() => toast('Link copied'), () => {});
+  return (
+    <div class="welcome-invite">
+      <p class="welcome-invite-label">Invitation</p>
+      <p>{`${info.creator || 'A friend'} invites you to “${info.title}”.`}{viaSafari ? '' : ` ${'Get started, and you can join right after.'}`}</p>
+      {viaSafari && (
+        <>
+          <ol class="welcome-invite-steps">
+            <li>Tap Share, then “Add to Home Screen”.</li>
+            <li>Open Haven from your Home Screen and sign up.</li>
+            <li>Tap “I already have a friend group” and paste this link.</li>
+          </ol>
+          <Button variant="secondary" onClick={copy}>Copy invite link</Button>
+        </>
+      )}
+    </div>
+  );
+}
 
 export function Welcome() {
   const nav = useNav();
@@ -37,6 +68,7 @@ export function Welcome() {
           <li><span>03</span><span><strong>Verified</strong>Compare safety numbers with the people you talk to.</span></li>
         </ul>
       </div>
+      <WelcomeInvite />
       <div class="welcome-actions">
         {sessionEnded && lastPhone ? (
           <>
