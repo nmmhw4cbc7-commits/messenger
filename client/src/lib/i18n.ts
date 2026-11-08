@@ -64,7 +64,7 @@ const DE: Record<string, string> = {
   'Get started, and you can join right after.': 'Leg los – danach kannst du direkt beitreten.',
   'Tap Share, then “Add to Home Screen”.': 'Tippe auf Teilen und dann „Zum Home-Bildschirm“.',
   'Open Haven from your Home Screen and sign up.': 'Öffne Haven vom Home-Bildschirm und registriere dich.',
-  'Tap “I already have a friend group” and paste this link.': 'Tippe auf „I already have a friend group“ und füge diesen Link ein.',
+  'Tap “I already have a friend group” and paste this link.': 'Tippe auf „Ich habe schon eine Freundesgruppe“ und füge diesen Link ein.',
   'Copy invite link': 'Einladungslink kopieren',
 
   // Today / Vlog your Day
