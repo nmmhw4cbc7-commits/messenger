@@ -2361,17 +2361,17 @@ button.plain-row:active { background: var(--press); transition: none; }
 
 .vlog-card { margin: 0 16px 18px; padding: 18px; border-radius: 18px; background: var(--bg-elevated); box-shadow: 0 0 0 0.5px var(--sep); display: flex; flex-direction: column; gap: 10px; }
 .vlog-card.mine { background: var(--ink); color: var(--on-ink); box-shadow: none; }
-.vlog-card.mine .vlog-card-text, .vlog-card.mine .vlog-card-hint { color: rgba(248, 247, 243, 0.68); }
+.vlog-card.mine .vlog-card-text, .vlog-card.mine .vlog-card-hint { color: color-mix(in srgb, var(--on-ink) 68%, transparent); }
 .vlog-card-person { display: flex; align-items: center; gap: 14px; }
 .vlog-card-label { margin: 0; display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--signal); }
 .vlog-card-title { margin: 2px 0 0; font-size: 24px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; }
 .vlog-card-text { margin: 0; font-size: 15px; line-height: 1.45; color: var(--text-2); }
 .vlog-card-hint { margin: 2px 0 0; font-size: 13px; color: var(--text-3); }
 .vlog-meter { display: flex; gap: 5px; }
-.vlog-meter span { flex: 1; height: 4px; border-radius: 2px; background: rgba(248, 247, 243, 0.18); }
+.vlog-meter span { flex: 1; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--on-ink) 18%, transparent); }
 .vlog-meter span.on { background: var(--signal); }
 .vlog-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
-.vlog-action { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; height: 78px; border: 0; border-radius: 14px; background: rgba(248, 247, 243, 0.08); color: var(--on-ink); font: inherit; font-size: 14px; font-weight: 600; }
+.vlog-action { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; height: 78px; border: 0; border-radius: 14px; background: color-mix(in srgb, var(--on-ink) 9%, transparent); color: var(--on-ink); font: inherit; font-size: 14px; font-weight: 600; }
 .vlog-action:first-child { background: var(--signal); color: #141412; }
 .vlog-action:active { transform: scale(0.97); }
 .vlog-action:disabled { opacity: 0.5; }
