@@ -3008,3 +3008,6 @@ button.vlog-reaction:active { transform: scale(0.94); }
 .group-row svg { color: var(--signal); }
 .vlog-topline { gap: 8px; }
 .vlog-topline .vlog-date { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Avatar editor: zoomed out, a blurred copy fills the circle around the picture */
+.avatar-editor-blur { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(1.15); border-radius: 50%; background-size: cover; background-position: center; filter: blur(18px) brightness(0.9); clip-path: circle(43.5%); pointer-events: none; }

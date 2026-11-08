@@ -8,6 +8,8 @@ import { openPicture, renderAvatar, type Crop } from '../lib/image';
 import { Spinner, toast } from './components';
 
 const MAX_ZOOM = 5;
+/** Below 1 the picture gets smaller than the circle; the gap is filled with a blurred copy. */
+const MIN_ZOOM = 0.4;
 
 /** Let the user frame the picture. Resolves with the JPEG, or null if cancelled. */
 export async function editAvatar(file: File): Promise<Blob | null> {
@@ -72,16 +74,17 @@ function AvatarEditor({ url, width, height, onCancel, onDone }: {
   // The picture always covers the circle: base scale fits its short side to the diameter.
   const base = d / Math.min(width, height);
   const clamp = (v: View): View => {
-    const zoom = Math.min(MAX_ZOOM, Math.max(1, v.zoom));
-    const maxX = (width * base * zoom - d) / 2;
-    const maxY = (height * base * zoom - d) / 2;
+    const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, v.zoom));
+    // Bigger than the circle: it must cover it. Smaller: it must stay inside it.
+    const maxX = Math.abs(width * base * zoom - d) / 2;
+    const maxY = Math.abs(height * base * zoom - d) / 2;
     return { zoom, x: Math.min(maxX, Math.max(-maxX, v.x)), y: Math.min(maxY, Math.max(-maxY, v.y)) };
   };
   const update = (fn: (v: View) => View) => setView((v) => clamp(fn(v)));
 
   // Zoom around a point (relative to the circle centre) so it stays under the fingers.
   const zoomAt = (v: View, zoom: number, px: number, py: number): View => {
-    const z = Math.min(MAX_ZOOM, Math.max(1, zoom));
+    const z = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
     const k = z / v.zoom;
     return { zoom: z, x: px - (px - v.x) * k, y: py - (py - v.y) * k };
   };
@@ -150,11 +153,8 @@ function AvatarEditor({ url, width, height, onCancel, onDone }: {
     const sx = width / 2 - v.x / scale - side / 2;
     const sy = height / 2 - v.y / scale - side / 2;
     try {
-      await onDone({
-        side,
-        sx: Math.min(width - side, Math.max(0, sx)),
-        sy: Math.min(height - side, Math.max(0, sy)),
-      });
+      // Zoomed out, the square reaches past the picture's edges; renderAvatar fills that with a blur.
+      await onDone({ side, sx, sy });
     } catch (err) {
       toast(err instanceof Error ? err.message : 'This picture could not be prepared.', 'error');
       setBusy(false);
@@ -174,8 +174,9 @@ function AvatarEditor({ url, width, height, onCancel, onDone }: {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
-        onDblClick={() => update((v) => (v.zoom > 1.01 ? { zoom: 1, x: 0, y: 0 } : { ...v, zoom: 2 }))}
+        onDblClick={() => update((v) => (Math.abs(v.zoom - 1) > 0.01 ? { zoom: 1, x: 0, y: 0 } : { ...v, zoom: 2 }))}
       >
+        {d > 0 && view.zoom < 1 && <div class="avatar-editor-blur" style={{ width: `${d}px`, height: `${d}px`, backgroundImage: `url(${url})` }} aria-hidden="true" />}
         {d > 0 && (
           <img
             src={url}
@@ -190,7 +191,7 @@ function AvatarEditor({ url, width, height, onCancel, onDone }: {
         <span aria-hidden="true">−</span>
         <input
           type="range"
-          min={1}
+          min={MIN_ZOOM}
           max={MAX_ZOOM}
           step={0.01}
           value={view.zoom}
