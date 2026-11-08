@@ -42,6 +42,12 @@ export function describeSystem(m: Msg, conv: Conv, meId: string | undefined): st
       return s.actorId === meId ? `You changed the chat theme to “${s.title}”` : `${actor} changed the chat theme to “${s.title}”`;
     case 'member_joined':
       return s.actorId === meId ? 'You joined the group' : `${actor} joined with an invite link`;
+    case 'call_ended':
+      return `Call · ${s.title}`;
+    case 'call_missed':
+      return s.actorId === meId ? 'No answer' : 'Missed call';
+    case 'call_failed':
+      return 'Call failed';
     case 'renamed':
       return `${actor} renamed the group to “${s.title}”`;
     default:

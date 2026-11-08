@@ -5,6 +5,7 @@ import { Navigator, resetNavigation } from './ui/nav';
 import { Spinner } from './ui/components';
 import { Welcome, ProfileSetup } from './screens/Onboarding';
 import { Home } from './screens/Home';
+import { CallOverlay } from './ui/CallScreen';
 
 export function App() {
   return (
@@ -25,7 +26,12 @@ function Phases() {
   if (phase === 'loading') return <Booting />;
   if (phase === 'signedOut') return <Navigator key="auth" root={<Welcome />} />;
   if (phase === 'profile') return <Navigator key="profile" root={<ProfileSetup />} />;
-  return <Navigator key="main" root={<Home />} />;
+  return (
+    <>
+      <Navigator key="main" root={<Home />} />
+      <CallOverlay />
+    </>
+  );
 }
 
 /** Starting normally takes well under a second; if it hangs, offer a way out instead of a blank screen. */

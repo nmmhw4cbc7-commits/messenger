@@ -9,6 +9,8 @@ import { MediaView, LocationCard, ContactCard, PollCard, VoiceRecorder, openAtta
 import { formatDay, formatTime, sameDay } from '../lib/format';
 import { Avatar, Button, confirmAction, toast } from '../ui/components';
 import { getNav, goBack, useNav } from '../ui/nav';
+import { Phone } from '../ui/icons';
+import { startCall, callsSupported } from '../lib/call';
 import { ArrowUp, ChevronLeft, Clock, Alert, Check, CheckDouble, Lock, Reply, Close, Copy, Trash, Pencil, Pin, Timer } from '../ui/icons';
 import { haptic } from '../lib/haptics';
 import { describeSystem } from './system';
@@ -94,6 +96,9 @@ export function ChatScreen({ convId }: { convId: string }) {
               <span class={`chat-header-sub${typingNow || presence === 'online' ? ' online' : ''}${typingNow ? ' typing' : ''}`}>{subtitle}</span>
             </span>
           </button>
+          {conv.kind === 'direct' && other && !conv.left && callsSupported() && (
+            <button class="chat-call" aria-label="Voice call" onClick={() => startCall(conv.id)}><Phone size={23} /></button>
+          )}
         </div>
       </header>
 

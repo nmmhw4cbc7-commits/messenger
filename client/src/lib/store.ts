@@ -51,7 +51,7 @@ export interface ReplyRef {
 }
 
 export interface SystemBody {
-  type: 'group_created' | 'members_added' | 'member_removed' | 'member_left' | 'renamed' | 'member_joined' | 'photo_changed' | 'photo_removed' | 'theme_changed' | 'pinned' | 'unpinned' | 'timer_changed';
+  type: 'group_created' | 'members_added' | 'member_removed' | 'member_left' | 'renamed' | 'member_joined' | 'photo_changed' | 'photo_removed' | 'theme_changed' | 'pinned' | 'unpinned' | 'timer_changed' | 'call_ended' | 'call_missed' | 'call_failed';
   actorId: string;
   targetIds?: string[];
   title?: string;
@@ -157,6 +157,21 @@ export interface State {
   activitySeen: number;
   /** Who is typing right now: convId -> userId -> until (ms). */
   typing: Record<string, Record<string, number>>;
+  /** The voice call on screen, if any. */
+  call: CallState | null;
+}
+
+export interface CallState {
+  callId: string;
+  convId: string;
+  peerId: string;
+  direction: 'out' | 'in';
+  phase: 'calling' | 'ringing' | 'connecting' | 'active' | 'ended';
+  startedAt?: number;
+  muted: boolean;
+  speaker: boolean;
+  /** Why it ended (shown briefly). */
+  endText?: string;
 }
 
 export interface Activity {
@@ -198,6 +213,7 @@ let state: State = {
   pushPreview: true,
   importing: 'none',
   circle: null,
+  call: null,
   activity: [],
   activitySeen: 0,
   typing: {},
