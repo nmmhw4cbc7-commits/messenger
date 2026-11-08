@@ -30,6 +30,11 @@ export const inviteUrl = (code: string) => `${location.origin}/?join=${code}`;
 export const pendingJoin = () => { try { return localStorage.getItem(JOIN_KEY) || ''; } catch { return ''; } };
 export const clearJoin = () => { try { localStorage.removeItem(JOIN_KEY); } catch { /* ignore */ } };
 
-export interface InvitePreview { title: string; creator: string; members: number; member: boolean }
+export interface InvitePerson { id: string; name: string; avatarVersion: number }
+export interface InvitePreview { title: string; creator: string; members: number; member: boolean; people?: InvitePerson[] }
+
+/** Profile photo of someone in the group, loadable with just the invite code. */
+export const inviteAvatarUrl = (code: string, p: InvitePerson) =>
+  p.avatarVersion ? `/api/invite/avatar?code=${encodeURIComponent(code)}&user=${encodeURIComponent(p.id)}&v=${p.avatarVersion}` : null;
 
 export const previewInvite = (code: string) => api<InvitePreview>('POST', '/api/circle/invite/preview', { code });

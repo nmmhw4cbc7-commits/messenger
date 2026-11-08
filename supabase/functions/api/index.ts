@@ -788,16 +788,10 @@ route('POST', '/auth/passkey/login/options', async ({ req, ip }) => {
   return { challengeId: await newChallenge('login', options.challenge, null, null), options };
 }, false);
 
-const KEYPAIR: Check = (v) => isObject(v) && Object.keys(v as Row).every((k) => k === 'encPub' || k === 'sigPub') &&
-  PUBKEY((v as Row).encPub) && PUBKEY((v as Row).sigPub);
-
-route('POST', '/auth/passkey/login', async ({ req, reply, body, ip }) => {
-  const b = shape<{ challengeId: string; response: Row; fresh: { encPub: string; sigPub: string }; stored?: { encPub: string; sigPub: string }; knownUserId?: string; deviceName?: string }>(body, {
-    challengeId: [isId, true], response: [isObject, true], fresh: [KEYPAIR, true], stored: [KEYPAIR, false], knownUserId: [isId, false], deviceName: [str(0, 60), false],
-  });
-  await enforce(`pklogin:ip:${ip}`, 60, HOUR);
-  const c = await takeChallenge(b.challengeId, 'login');
-  const credId = typeof b.response.id === 'string' ? b.response.id : '';
+/** Check a passkey sign-in (challenge from /auth/passkey/login/options). Returns the passkey row (with user_id). */
+async function passkeyOwner(req: Request, challengeId: string, response: Row) {
+  const c = await takeChallenge(challengeId, 'login');
+  const credId = typeof response.id === 'string' ? response.id : '';
   const [pk] = credId ? await sql`select * from haven.passkeys where id = ${credId}` : [];
   if (!pk) throw new HttpError(400, 'unknown_passkey', 'This passkey is not linked to a Haven account (any more).');
   const { origin, rpID } = await relyingParty(req);
@@ -805,7 +799,7 @@ route('POST', '/auth/passkey/login', async ({ req, reply, body, ip }) => {
   try {
     result = await verifyAuthenticationResponse({
       // deno-lint-ignore no-explicit-any
-      response: b.response as any,
+      response: response as any,
       expectedChallenge: c.challenge,
       expectedOrigin: origin,
       expectedRPID: rpID,
@@ -819,6 +813,18 @@ route('POST', '/auth/passkey/login', async ({ req, reply, body, ip }) => {
   }
   if (!result.verified) throw new HttpError(400, 'passkey_failed', 'Sign-in with this passkey failed. Please try again.');
   await sql`update haven.passkeys set counter = ${result.authenticationInfo.newCounter}, last_used_at = ${now()} where id = ${pk.id}`;
+  return pk;
+}
+
+const KEYPAIR: Check = (v) => isObject(v) && Object.keys(v as Row).every((k) => k === 'encPub' || k === 'sigPub') &&
+  PUBKEY((v as Row).encPub) && PUBKEY((v as Row).sigPub);
+
+route('POST', '/auth/passkey/login', async ({ req, reply, body, ip }) => {
+  const b = shape<{ challengeId: string; response: Row; fresh: { encPub: string; sigPub: string }; stored?: { encPub: string; sigPub: string }; knownUserId?: string; deviceName?: string }>(body, {
+    challengeId: [isId, true], response: [isObject, true], fresh: [KEYPAIR, true], stored: [KEYPAIR, false], knownUserId: [isId, false], deviceName: [str(0, 60), false],
+  });
+  await enforce(`pklogin:ip:${ip}`, 60, HOUR);
+  const pk = await passkeyOwner(req, b.challengeId, b.response);
   // The same account as before on this device: keep its keys (and its chats).
   const keys = b.stored && b.knownUserId === pk.user_id ? b.stored : b.fresh;
   await validKeys(keys.encPub, keys.sigPub);
@@ -1459,25 +1465,27 @@ route('POST', '/circle/invite/preview', async ({ req, body, ip }) => {
   if (!c) throw new HttpError(404, 'invite_invalid', 'This invite link is not valid anymore. Ask for a new one.');
   const [creator] = await sql`select name from haven.users where id = ${c.created_by}`;
   const [{ n }] = await sql`select count(*)::int as n from haven.members where conversation_id = ${c.id}`;
+  const people = (await sql`select u.id, u.name, u.avatar_version from haven.members m join haven.users u on u.id = m.user_id
+                            where m.conversation_id = ${c.id} and u.name <> '' order by (u.id = ${c.created_by}) desc, m.joined_at limit 8`)
+    .map((u) => ({ id: u.id, name: u.name, avatarVersion: Number(u.avatar_version) }));
   let member = false;
   const token = readCookie(req, COOKIE);
   if (token) {
     const [s] = await sql`select user_id from haven.sessions where token_hash = ${sha256(token)} and expires_at > ${now()}`;
     if (s) member = Boolean((await sql`select 1 from haven.members where conversation_id = ${c.id} and user_id = ${s.user_id}`).length);
   }
-  return { title: c.title, creator: creator?.name || '', members: n, member };
+  return { title: c.title, creator: creator?.name || '', members: n, member, people };
 }, false);
 
-route('POST', '/circle/join', async ({ req, reply, body }) => {
-  const user = await currentUser(req, reply);
-  const { code } = shape<{ code: string }>(body, { code: [str(12, 12, LINK_CODE), true] });
+/** Add this user to the friend group of an invite code. Returns the group's id. */
+async function joinByCode(user: Row, code: string): Promise<string> {
   await enforce(`join:${user.id}`, 20, HOUR);
   const invalid = new HttpError(400, 'invite_invalid', 'This invite link is not valid anymore. Ask for a new one.');
   const c = await circleByCode(code);
   const inv = c ? { conversation_id: c.id as string, created_by: c.created_by as string } : null;
   if (!inv || (await hasBlocked(inv.created_by, user.id))) throw invalid;
   const current = await memberIds(inv.conversation_id);
-  if (current.includes(user.id)) return { conversation: await oneConversation(inv.conversation_id, user.id) };
+  if (current.includes(user.id)) return inv.conversation_id;
   if ((await circlesOf(user.id)).length >= 10) throw new HttpError(400, 'too_many_circles', 'You can be in up to 10 friend groups.');
   if (!user.name) throw new HttpError(400, 'no_name', 'Add your name first.');
   if (current.length >= MAX_GROUP) throw new HttpError(400, 'group_full', `Groups can have up to ${MAX_GROUP} members.`);
@@ -1488,8 +1496,49 @@ route('POST', '/circle/join', async ({ req, reply, body }) => {
   await broadcast([...current, user.id], 'conversations');
   await broadcast(current, 'sync');
   await notifyUsers(current, 'joined', user.name, 'today');
-  return { conversation: await oneConversation(inv.conversation_id, user.id) };
+  return inv.conversation_id;
+}
+
+route('POST', '/circle/join', async ({ req, reply, body }) => {
+  const user = await currentUser(req, reply);
+  const { code } = shape<{ code: string }>(body, { code: [str(12, 12, LINK_CODE), true] });
+  const id = await joinByCode(user, code);
+  return { conversation: await oneConversation(id, user.id) };
 });
+
+// Join with a passkey from a browser that isn't signed in (e.g. Safari on an
+// iPhone whose Haven runs from the Home Screen). Only joins: no session, and
+// the devices of the account stay as they are.
+route('POST', '/circle/join/passkey', async ({ req, body, ip }) => {
+  const b = shape<{ code: string; challengeId: string; response: Row }>(body, {
+    code: [str(12, 12, LINK_CODE), true], challengeId: [isId, true], response: [isObject, true],
+  });
+  await enforce(`pklogin:ip:${ip}`, 60, HOUR);
+  const pk = await passkeyOwner(req, b.challengeId, b.response);
+  const [user] = await sql`select * from haven.users where id = ${pk.user_id}`;
+  if (!user) throw new HttpError(400, 'no_account', 'This passkey belongs to an account that no longer exists.');
+  const id = await joinByCode(user, b.code);
+  const [c] = await sql`select title from haven.conversations where id = ${id}`;
+  return { title: c?.title ?? '' };
+}, false);
+
+// Profile photos of the people in a friend group, for the invite page (before signing in).
+route('GET', '/invite/avatar', async ({ url, ip }) => {
+  const code = url.searchParams.get('code') ?? '';
+  const userId = url.searchParams.get('user') ?? '';
+  if (!LINK_CODE.test(code) || !ID_RE.test(userId)) throw new HttpError(400, 'invalid_request');
+  await enforce(`inviteavatar:${ip}`, 600, HOUR);
+  const c = await circleByCode(code);
+  if (!c) throw new HttpError(404, 'not_found');
+  const [row] = await sql`select a.data from haven.avatars a join haven.members m on m.user_id = a.user_id and m.conversation_id = ${c.id}
+                          where a.user_id = ${userId}`;
+  if (!row) throw new HttpError(404, 'not_found');
+  const headers = new Headers(BASE_HEADERS);
+  headers.set('Content-Type', 'image/jpeg');
+  headers.set('Cache-Control', 'private, max-age=86400');
+  headers.set('Content-Security-Policy', "default-src 'none'; sandbox");
+  return new Response(row.data, { status: 200, headers });
+}, false);
 
 // ---- messages
 

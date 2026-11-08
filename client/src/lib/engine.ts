@@ -130,6 +130,19 @@ export async function signInWithPasskey() {
   await finishSignIn(res.me);
 }
 
+/**
+ * Join a friend group with a passkey from a browser that isn't signed in
+ * (Safari, when Haven itself runs from the Home Screen). Only joins: this
+ * browser stays signed out and the account's devices stay as they are.
+ */
+export async function joinWithPasskey(code: string): Promise<string> {
+  const { startAuthentication } = await import('@simplewebauthn/browser');
+  const opts = await api<PasskeyOptions<Parameters<typeof startAuthentication>[0]['optionsJSON']>>('POST', '/api/auth/passkey/login/options', {});
+  const response = await startAuthentication({ optionsJSON: opts.options });
+  const res = await api<{ title: string }>('POST', '/api/circle/join/passkey', { code, challengeId: opts.challengeId, response });
+  return res.title;
+}
+
 /** Signed in already (account from before passkeys): add a passkey so this account can sign in again later. */
 export async function addPasskey() {
   const { startRegistration } = await import('@simplewebauthn/browser');
