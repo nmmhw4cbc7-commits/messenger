@@ -10,6 +10,7 @@
 import postgres from 'npm:postgres@3.4.5';
 import { parsePhoneNumberWithError } from 'npm:libphonenumber-js@1.11.20/max';
 import webpush from 'npm:web-push@3.6.7';
+import { generateRegistrationOptions, verifyRegistrationResponse, generateAuthenticationOptions, verifyAuthenticationResponse } from 'npm:@simplewebauthn/server@13.1.1';
 import { scrypt as scryptCb, timingSafeEqual, randomBytes, randomInt, createHash } from 'node:crypto';
 import { Buffer } from 'node:buffer';
 
@@ -23,7 +24,6 @@ const DAY = 24 * HOUR;
 const SESSION_DAYS = 60;
 const RETENTION_DAYS = 30;
 const MAX_GROUP = 100;
-const PIN_LOCK_WINDOW = 7 * DAY;
 const COOKIE = '__Host-haven';
 const MAX_BODY = 100 * 1024;
 const MAX_AVATAR = 300 * 1024;
@@ -77,9 +77,6 @@ async function kvGet(key: string): Promise<string | null> {
   const [row] = await sql`select value from haven.kv where key = ${key}`;
   return row?.value ?? null;
 }
-async function kvSet(key: string, value: string) {
-  await sql`insert into haven.kv (key, value) values (${key}, ${value}) on conflict (key) do update set value = excluded.value`;
-}
 
 // ------------------------------------------------------------------ validation
 
@@ -94,6 +91,8 @@ const idList = (min: number, max: number): Check => (v) =>
   Array.isArray(v) && v.length >= min && v.length <= max && v.every(isId) && new Set(v).size === v.length;
 const PHONE_IN = str(3, 32);
 const PUBKEY = str(87, 87, B64URL);
+const USERNAME = /^[a-z0-9_.]{3,20}$/;
+const isObject: Check = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 
 /** Validate a JSON object against a spec. Unknown keys are rejected. */
 function shape<T>(value: unknown, spec: Record<string, [Check, boolean]>): T {
@@ -192,11 +191,12 @@ async function devicesOf(userIds: string[]): Promise<Map<string, DeviceKey[]>> {
 
 const serializeMe = (u: Row, device: Row, devices: DeviceKey[]) => ({
   id: u.id,
-  phone: u.phone,
+  phone: u.phone ?? '',
+  username: u.username ?? '',
   name: u.name,
   about: u.about,
   avatarVersion: Number(u.avatar_version),
-  hasPin: Boolean(u.pin_hash),
+  passkeys: Number(u.passkey_count ?? 0),
   readReceipts: u.read_receipts !== false,
   presence: u.presence !== false,
   deviceId: device.id,
@@ -206,7 +206,8 @@ const serializeMe = (u: Row, device: Row, devices: DeviceKey[]) => ({
 
 const publicProfile = (u: Row, devices: DeviceKey[] = []) => ({
   id: u.id,
-  phone: u.phone,
+  phone: u.phone ?? '',
+  username: u.username ?? '',
   name: u.name,
   about: u.about,
   avatarVersion: Number(u.avatar_version),
@@ -214,7 +215,7 @@ const publicProfile = (u: Row, devices: DeviceKey[] = []) => ({
 });
 
 async function loadMe(userId: string, deviceId: string) {
-  const [u] = await sql`select * from haven.users where id = ${userId}`;
+  const [u] = await sql`select u.*, (select count(*) from haven.passkeys p where p.user_id = u.id)::int as passkey_count from haven.users u where u.id = ${userId}`;
   const [d] = await sql`select * from haven.devices where id = ${deviceId}`;
   return serializeMe(u, d, (await devicesOf([userId])).get(userId) ?? []);
 }
@@ -495,132 +496,28 @@ async function circleTick() {
   }
 }
 
-// ------------------------------------------------------------------ Telegram verification
-
-// The bot token comes from the TELEGRAM_BOT_TOKEN secret, or else from the private kv table.
-let tokenCache: { at: number; value: string } | null = null;
-async function botToken(): Promise<string> {
-  const fromEnv = Deno.env.get('TELEGRAM_BOT_TOKEN');
-  if (fromEnv) return fromEnv;
-  if (tokenCache && now() - tokenCache.at < MIN) return tokenCache.value;
-  tokenCache = { at: now(), value: (await kvGet('telegram_bot_token')) || '' };
-  return tokenCache.value;
-}
-
-async function telegram(method: string, payload: unknown) {
-  const res = await fetch(`https://api.telegram.org/bot${await botToken()}/${method}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(8000),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!data.ok) throw new Error(`telegram ${method} failed: ${data.description || res.status}`);
-  return data.result;
-}
-
-/** Make sure the bot is known and its webhook points here. Returns the bot username. */
-async function ensureBot(): Promise<string> {
-  const token = await botToken();
-  if (!token) throw new HttpError(503, 'verification_unavailable', 'Phone verification is not set up yet. Please try again later.');
-  const fingerprint = sha256(token).slice(0, 16);
-  const [cachedFp, cachedName] = await Promise.all([kvGet('telegram_bot_fp'), kvGet('telegram_bot_username')]);
-  if (cachedFp === fingerprint && cachedName) return cachedName;
-
-  const me = await telegram('getMe', {});
-  let secret = await kvGet('telegram_webhook_secret');
-  if (!secret) {
-    secret = newToken();
-    await kvSet('telegram_webhook_secret', secret);
-  }
-  await telegram('setWebhook', {
-    url: `${SUPABASE_URL}/functions/v1/api/telegram/webhook`,
-    secret_token: secret,
-    allowed_updates: ['message'],
-    drop_pending_updates: true,
-  });
-  await telegram('setMyDescription', { description: 'Confirms your phone number for Haven, the private messenger. Open Haven and tap “Confirm with Telegram”.' }).catch(() => {});
-  await kvSet('telegram_bot_username', me.username);
-  await kvSet('telegram_bot_fp', fingerprint);
-  return me.username;
-}
-
-const send = (chatId: number, text: string, extra: Record<string, unknown> = {}) =>
-  telegram('sendMessage', { chat_id: chatId, text, ...extra }).catch((e) => console.error(String(e)));
-
-async function telegramWebhook(req: Request) {
-  const secret = await kvGet('telegram_webhook_secret');
-  const given = req.headers.get('x-telegram-bot-api-secret-token') || '';
-  if (!secret || !safeEqual(given, secret)) return new Response('forbidden', { status: 403 });
-
-  const update = JSON.parse(await req.text());
-  const msg = update?.message;
-  if (!msg || msg.chat?.type !== 'private') return new Response('ok');
-  const chatId: number = msg.chat.id;
-  const t = now();
-
-  if (typeof msg.text === 'string' && msg.text.startsWith('/start')) {
-    const startToken = msg.text.slice(6).trim();
-    const [v] = startToken
-      ? await sql`select * from haven.verifications where start_token = ${startToken} and expires_at > ${t} and status = 'pending'`
-      : [];
-    if (!v) {
-      await send(chatId, 'To confirm your number, open Haven and tap “Confirm with Telegram”. Links expire after 10 minutes.');
-      return new Response('ok');
-    }
-    await sql`update haven.verifications set chat_id = ${chatId} where id = ${v.id}`;
-    await send(chatId, `Confirm ${v.phone} for Haven.\n\nTap “Share my phone number” below. Telegram shares only the number of this account.`, {
-      reply_markup: { keyboard: [[{ text: 'Share my phone number', request_contact: true }]], resize_keyboard: true, one_time_keyboard: true },
-    });
-    return new Response('ok');
-  }
-
-  if (msg.contact) {
-    const [v] = await sql`select * from haven.verifications where chat_id = ${chatId} and status = 'pending' and expires_at > ${t}
-                          order by created_at desc limit 1`;
-    if (!v) {
-      await send(chatId, 'This confirmation expired. Please start again in Haven.', { reply_markup: { remove_keyboard: true } });
-      return new Response('ok');
-    }
-    // Only the account's own number counts, not a forwarded contact card.
-    if (msg.contact.user_id !== msg.from?.id) {
-      await send(chatId, 'Please use the “Share my phone number” button to share your own number.');
-      return new Response('ok');
-    }
-    const shared = normalizePhone(`+${String(msg.contact.phone_number).replace(/\D/g, '')}`);
-    if (shared && shared === v.phone) {
-      await sql`update haven.verifications set status = 'verified' where id = ${v.id}`;
-      await send(chatId, '✅ Your number is confirmed. You can go back to Haven now.', { reply_markup: { remove_keyboard: true } });
-    } else {
-      await sql`update haven.verifications set status = 'mismatch' where id = ${v.id}`;
-      await send(chatId, `This Telegram account uses a different number. In Haven, enter the number of this Telegram account and try again.`, {
-        reply_markup: { remove_keyboard: true },
-      });
-    }
-    return new Response('ok');
-  }
-
-  await send(chatId, 'To confirm your number, open Haven and tap “Confirm with Telegram”.');
-  return new Response('ok');
-}
-
 // ------------------------------------------------------------------ sign-in
 
 /**
- * Sign in with a confirmed phone number. Same keys as a known device: that
- * device signs in again. New keys: this becomes the account's only device and
- * every other device is signed out (like registering on a new phone).
+ * Sign in to an account (proven with a passkey). Same keys as a known device:
+ * that device signs in again. New keys: this becomes the account's only device
+ * and every other device is signed out (like setting up a new phone).
  */
-async function completeSignIn(reply: Reply, phone: string, encPub: string, sigPub: string, deviceName: string) {
+// deno-lint-ignore no-explicit-any
+async function completeSignIn(reply: Reply, account: { id: string; create?: { name: string }; extra?: (tx: any) => Promise<unknown> }, encPub: string, sigPub: string, deviceName: string) {
   const t = now();
   const result = await sql.begin(async (tx) => {
-    let [user] = await tx`select * from haven.users where phone = ${phone} for update`;
     let isNew = false;
     let oldTokens: string[] = [];
-    if (!user) {
+    let user: Row;
+    if (account.create) {
       isNew = true;
-      [user] = await tx`insert into haven.users (id, phone, created_at, last_active_at) values (${randomId()}, ${phone}, ${t}, ${t}) returning *`;
+      [user] = await tx`insert into haven.users (id, phone, name, created_at, last_active_at) values (${account.id}, null, ${account.create.name}, ${t}, ${t}) returning *`;
+    } else {
+      [user] = await tx`select * from haven.users where id = ${account.id} for update`;
+      if (!user) throw new HttpError(400, 'no_account', 'This passkey belongs to an account that no longer exists.');
     }
+    if (account.extra) await account.extra(tx);
     let [device] = await tx`select * from haven.devices where user_id = ${user.id} and enc_pub = ${encPub} and sig_pub = ${sigPub}`;
     if (device) {
       await tx`delete from haven.sessions where device_id = ${device.id}`;
@@ -630,7 +527,7 @@ async function completeSignIn(reply: Reply, phone: string, encPub: string, sigPu
       [device] = await tx`insert into haven.devices (id, user_id, enc_pub, sig_pub, inbox_token, name, created_at, last_active_at)
                           values (${randomId()}, ${user.id}, ${encPub}, ${sigPub}, ${newToken()}, ${deviceName}, ${t}, ${t}) returning *`;
     }
-    await tx`update haven.users set pin_failures = 0, pin_locked_until = 0, last_active_at = ${t} where id = ${user.id}`;
+    await tx`update haven.users set last_active_at = ${t} where id = ${user.id}`;
     return { user, device, isNew, oldTokens, keysChanged: oldTokens.length > 0 };
   });
   // Tell the previous devices (on their old channels) that their session has ended.
@@ -669,7 +566,7 @@ async function hasBlocked(blockerId: string, blockedId: string) {
 async function serializeConversations(convs: Row[], userId: string) {
   if (!convs.length) return [];
   const ids = convs.map((c) => c.id);
-  const members = await sql`select m.conversation_id, m.role, m.joined_at, m.last_read_at, u.read_receipts, u.id, u.phone, u.name, u.about, u.avatar_version
+  const members = await sql`select m.conversation_id, m.role, m.joined_at, m.last_read_at, u.read_receipts, u.id, u.phone, u.username, u.name, u.about, u.avatar_version
                             from haven.members m join haven.users u on u.id = m.user_id
                             where m.conversation_id = any(${ids}) order by m.joined_at, u.id`;
   const devices = await devicesOf([...new Set(members.map((m) => m.id as string))]);
@@ -756,8 +653,7 @@ function isJpeg(b: Uint8Array) {
 async function cleanup() {
   const t = now();
   await sql`delete from haven.sessions where expires_at < ${t}`;
-  await sql`delete from haven.verifications where expires_at < ${t - HOUR}`;
-  await sql`delete from haven.pin_challenges where expires_at < ${t}`;
+  await sql`delete from haven.passkey_challenges where expires_at < ${t}`;
   await sql`delete from haven.link_requests where expires_at < ${t}`;
   await sql`delete from haven.rate_limits where reset_at < ${t}`;
   await sql`delete from haven.messages where created_at < ${t - RETENTION_DAYS * DAY}`;
@@ -786,76 +682,167 @@ const ok = { ok: true };
 
 // ---- auth
 
-route('POST', '/auth/start', async ({ body, ip }) => {
-  const { phone: input } = shape<{ phone: string }>(body, { phone: [PHONE_IN, true] });
-  const phone = normalizePhone(input);
-  if (!phone) throw new HttpError(400, 'invalid_phone', 'Please enter a valid mobile number.');
-  await enforce(`start:ip:${ip}`, 20, HOUR);
-  await enforce(`start:phone:${phone}`, 10, HOUR);
-  const bot = await ensureBot();
-  const id = randomId();
-  const pollSecret = newToken();
-  const startToken = randomBytes(24).toString('base64url');
-  const t = now();
-  await sql`insert into haven.verifications (id, poll_hash, start_token, phone, expires_at, created_at)
-            values (${id}, ${sha256(pollSecret)}, ${startToken}, ${phone}, ${t + 10 * MIN}, ${t})`;
-  return { phone, verifyId: id, pollSecret, telegramUrl: `https://t.me/${bot}?start=${startToken}`, expiresAt: t + 10 * MIN };
-}, false);
+// Accounts are protected by passkeys (Face ID / Touch ID / device PIN). The
+// passkey is stored by the phone's password manager (iCloud Keychain, Google
+// Password Manager) and syncs to the user's other devices, so a new phone can
+// sign in with it. No phone number and no outside service is needed.
 
-route('POST', '/auth/verify', async ({ body, reply, ip }) => {
-  const b = shape<{ verifyId: string; pollSecret: string; encPub: string; sigPub: string; deviceName?: string }>(body, {
-    verifyId: [isId, true], pollSecret: [str(40, 64), true], encPub: [PUBKEY, true], sigPub: [PUBKEY, true], deviceName: [str(0, 60), false],
+async function relyingParty(req: Request) {
+  const given = req.headers.get('origin');
+  const origins = await allowedOrigins();
+  const origin = given && origins.includes(given) ? given : origins[0];
+  if (!origin) throw new HttpError(500, 'server_error', 'Something went wrong on our side. Please try again.');
+  return { origin, rpID: new URL(origin).hostname };
+}
+
+async function newChallenge(kind: string, challenge: string, userId: string | null, userHandle: string | null) {
+  const id = randomId();
+  await sql`insert into haven.passkey_challenges (id, challenge, kind, user_id, user_handle, expires_at)
+            values (${id}, ${challenge}, ${kind}, ${userId}, ${userHandle}, ${now() + 5 * MIN})`;
+  return id;
+}
+
+async function takeChallenge(id: string, kind: string) {
+  const [c] = await sql`delete from haven.passkey_challenges where id = ${id} and kind = ${kind} returning *`;
+  if (!c || Number(c.expires_at) < now()) throw new HttpError(400, 'challenge_expired', 'This took too long. Please try again.');
+  return c;
+}
+
+/** Options for creating a passkey. New accounts get their id now; it becomes the passkey's user handle. */
+async function registrationOptions(req: Request, kind: 'register' | 'add', userId: string | null, label: string) {
+  const { rpID } = await relyingParty(req);
+  const handle = userId ?? randomId();
+  const existing = userId ? await sql`select id, transports from haven.passkeys where user_id = ${userId}` : [];
+  const options = await generateRegistrationOptions({
+    rpName: 'Haven',
+    rpID,
+    userName: label,
+    userDisplayName: label,
+    userID: new TextEncoder().encode(handle),
+    attestationType: 'none',
+    // deno-lint-ignore no-explicit-any
+    excludeCredentials: existing.map((c: Row) => ({ id: c.id, transports: c.transports ? c.transports.split(',') : undefined })) as any,
+    authenticatorSelection: { residentKey: 'required', userVerification: 'preferred' },
   });
-  await enforce(`verify:ip:${ip}`, 1200, 10 * MIN);
-  await enforce(`verify:id:${b.verifyId}`, 600, 10 * MIN);
-  const [v] = await sql`select * from haven.verifications where id = ${b.verifyId}`;
-  if (!v || !safeEqual(v.poll_hash, sha256(b.pollSecret)) || Number(v.expires_at) < now()) {
-    throw new HttpError(400, 'verification_expired', 'This confirmation expired. Please start again.');
+  const challengeId = await newChallenge(kind, options.challenge, userId, handle);
+  return { challengeId, options };
+}
+
+// deno-lint-ignore no-explicit-any
+async function checkRegistration(req: Request, c: Row, response: any) {
+  const { origin, rpID } = await relyingParty(req);
+  let result;
+  try {
+    result = await verifyRegistrationResponse({ response, expectedChallenge: c.challenge, expectedOrigin: origin, expectedRPID: rpID, requireUserVerification: false });
+  } catch (e) {
+    console.error('passkey register', String(e));
+    throw new HttpError(400, 'passkey_failed', 'The passkey could not be set up. Please try again.');
   }
-  if (v.status === 'mismatch') {
-    throw new HttpError(400, 'phone_mismatch', 'Your Telegram account uses a different number. Enter the number of your Telegram account.');
-  }
-  if (v.status !== 'verified') return { status: 'pending' };
-  if (!(await isValidP256Key(b.encPub, 'ECDH')) || !(await isValidP256Key(b.sigPub, 'ECDSA'))) {
+  if (!result.verified || !result.registrationInfo) throw new HttpError(400, 'passkey_failed', 'The passkey could not be set up. Please try again.');
+  const cred = result.registrationInfo.credential;
+  return { id: cred.id, publicKey: Buffer.from(cred.publicKey).toString('base64url'), counter: cred.counter, transports: (cred.transports ?? []).join(',') };
+}
+
+// deno-lint-ignore no-explicit-any
+async function savePasskey(tx: any, userId: string, cred: { id: string; publicKey: string; counter: number; transports: string }) {
+  const t = now();
+  await tx`insert into haven.passkeys (id, user_id, public_key, counter, transports, created_at, last_used_at)
+           values (${cred.id}, ${userId}, ${cred.publicKey}, ${cred.counter}, ${cred.transports}, ${t}, ${t})`;
+}
+
+async function validKeys(encPub: string, sigPub: string) {
+  if (!(await isValidP256Key(encPub, 'ECDH')) || !(await isValidP256Key(sigPub, 'ECDSA'))) {
     throw new HttpError(400, 'invalid_keys', 'Your device produced invalid keys. Please reload and try again.');
   }
-  // One use only.
-  const used = await sql`delete from haven.verifications where id = ${v.id} returning id`;
-  if (!used.length) throw new HttpError(400, 'verification_expired', 'This confirmation expired. Please start again.');
+}
 
-  const [existing] = await sql`select pin_hash, last_active_at from haven.users where phone = ${v.phone}`;
-  if (existing?.pin_hash && now() - Number(existing.last_active_at) < PIN_LOCK_WINDOW) {
-    const challenge = newToken();
-    await sql`insert into haven.pin_challenges (token_hash, phone, enc_pub, sig_pub, expires_at)
-              values (${sha256(challenge)}, ${v.phone}, ${b.encPub}, ${b.sigPub}, ${now() + 10 * MIN})`;
-    return { status: 'pin_required', challenge };
-  }
-  return completeSignIn(reply, v.phone, b.encPub, b.sigPub, cleanLine(b.deviceName ?? '', 40));
+// ---- new account
+
+route('POST', '/auth/passkey/register/options', async ({ req, body, ip }) => {
+  const { name } = shape<{ name: string }>(body, { name: [str(1, 200), true] });
+  const clean = cleanLine(name, 40);
+  if (!clean) throw new HttpError(400, 'invalid_name', 'Please enter a name.');
+  await enforce(`pkreg:ip:${ip}`, 30, HOUR);
+  return registrationOptions(req, 'register', null, clean);
 }, false);
 
-route('POST', '/auth/pin', async ({ body, reply, ip }) => {
-  const b = shape<{ challenge: string; pin: string }>(body, { challenge: [str(40, 64), true], pin: [str(4, 12, /^\d+$/), true] });
-  await enforce(`pin:ip:${ip}`, 20, HOUR);
-  const [pending] = await sql`select * from haven.pin_challenges where token_hash = ${sha256(b.challenge)} and expires_at > ${now()}`;
-  if (!pending) throw new HttpError(400, 'challenge_expired', 'This sign-in expired. Please start again.');
-  const [user] = await sql`select id, pin_hash, pin_failures, pin_locked_until from haven.users where phone = ${pending.phone}`;
-  const finish = async () => {
-    await sql`delete from haven.pin_challenges where token_hash = ${pending.token_hash}`;
-    return completeSignIn(reply, pending.phone, pending.enc_pub, pending.sig_pub, '');
-  };
-  if (!user?.pin_hash) return finish();
-  if (Number(user.pin_locked_until) > now()) {
-    throw new HttpError(429, 'pin_locked', 'Too many wrong PINs. Try again later.', { retryAfter: Math.ceil((Number(user.pin_locked_until) - now()) / 1000) });
-  }
-  if (!(await verifyPin(b.pin, user.pin_hash))) {
-    const failures = user.pin_failures + 1;
-    const lockedUntil = failures >= 5 ? now() + DAY : 0;
-    await sql`update haven.users set pin_failures = ${lockedUntil ? 0 : failures}, pin_locked_until = ${lockedUntil} where id = ${user.id}`;
-    if (lockedUntil) await sql`delete from haven.pin_challenges where token_hash = ${pending.token_hash}`;
-    throw new HttpError(400, 'invalid_pin', lockedUntil ? 'Too many wrong PINs. Try again in 24 hours.' : 'Wrong PIN.', { attemptsLeft: lockedUntil ? 0 : 5 - failures });
-  }
-  return finish();
+route('POST', '/auth/passkey/register', async ({ req, reply, body, ip }) => {
+  const b = shape<{ challengeId: string; response: unknown; name: string; encPub: string; sigPub: string; deviceName?: string }>(body, {
+    challengeId: [isId, true], response: [isObject, true], name: [str(1, 200), true], encPub: [PUBKEY, true], sigPub: [PUBKEY, true], deviceName: [str(0, 60), false],
+  });
+  await enforce(`pkreg:ip:${ip}`, 30, HOUR);
+  const name = cleanLine(b.name, 40);
+  if (!name) throw new HttpError(400, 'invalid_name', 'Please enter a name.');
+  await validKeys(b.encPub, b.sigPub);
+  const c = await takeChallenge(b.challengeId, 'register');
+  const cred = await checkRegistration(req, c, b.response);
+  return completeSignIn(reply, { id: c.user_handle, create: { name }, extra: (tx) => savePasskey(tx, c.user_handle, cred) }, b.encPub, b.sigPub, cleanLine(b.deviceName ?? '', 40));
 }, false);
+
+// ---- sign in
+
+route('POST', '/auth/passkey/login/options', async ({ req, ip }) => {
+  await enforce(`pklogin:ip:${ip}`, 60, HOUR);
+  const { rpID } = await relyingParty(req);
+  const options = await generateAuthenticationOptions({ rpID, userVerification: 'preferred' });
+  return { challengeId: await newChallenge('login', options.challenge, null, null), options };
+}, false);
+
+const KEYPAIR: Check = (v) => isObject(v) && Object.keys(v as Row).every((k) => k === 'encPub' || k === 'sigPub') &&
+  PUBKEY((v as Row).encPub) && PUBKEY((v as Row).sigPub);
+
+route('POST', '/auth/passkey/login', async ({ req, reply, body, ip }) => {
+  const b = shape<{ challengeId: string; response: Row; fresh: { encPub: string; sigPub: string }; stored?: { encPub: string; sigPub: string }; knownUserId?: string; deviceName?: string }>(body, {
+    challengeId: [isId, true], response: [isObject, true], fresh: [KEYPAIR, true], stored: [KEYPAIR, false], knownUserId: [isId, false], deviceName: [str(0, 60), false],
+  });
+  await enforce(`pklogin:ip:${ip}`, 60, HOUR);
+  const c = await takeChallenge(b.challengeId, 'login');
+  const credId = typeof b.response.id === 'string' ? b.response.id : '';
+  const [pk] = credId ? await sql`select * from haven.passkeys where id = ${credId}` : [];
+  if (!pk) throw new HttpError(400, 'unknown_passkey', 'This passkey is not linked to a Haven account (any more).');
+  const { origin, rpID } = await relyingParty(req);
+  let result;
+  try {
+    result = await verifyAuthenticationResponse({
+      // deno-lint-ignore no-explicit-any
+      response: b.response as any,
+      expectedChallenge: c.challenge,
+      expectedOrigin: origin,
+      expectedRPID: rpID,
+      requireUserVerification: false,
+      // deno-lint-ignore no-explicit-any
+      credential: { id: pk.id, publicKey: new Uint8Array(Buffer.from(pk.public_key, 'base64url')), counter: Number(pk.counter), transports: pk.transports ? pk.transports.split(',') as any : undefined },
+    });
+  } catch (e) {
+    console.error('passkey login', String(e));
+    throw new HttpError(400, 'passkey_failed', 'Sign-in with this passkey failed. Please try again.');
+  }
+  if (!result.verified) throw new HttpError(400, 'passkey_failed', 'Sign-in with this passkey failed. Please try again.');
+  await sql`update haven.passkeys set counter = ${result.authenticationInfo.newCounter}, last_used_at = ${now()} where id = ${pk.id}`;
+  // The same account as before on this device: keep its keys (and its chats).
+  const keys = b.stored && b.knownUserId === pk.user_id ? b.stored : b.fresh;
+  await validKeys(keys.encPub, keys.sigPub);
+  const res = await completeSignIn(reply, { id: pk.user_id }, keys.encPub, keys.sigPub, cleanLine(b.deviceName ?? '', 40));
+  return { ...res, keptKeys: keys === b.stored };
+}, false);
+
+// ---- add a passkey to the signed-in account (accounts made before passkeys)
+
+route('POST', '/passkeys/options', async ({ req, reply }) => {
+  const user = await currentUser(req, reply);
+  await enforce(`pkadd:${user.id}`, 20, HOUR);
+  return registrationOptions(req, 'add', user.id, user.username ? `@${user.username}` : user.name || 'Haven');
+});
+
+route('POST', '/passkeys', async ({ req, reply, body }) => {
+  const user = await currentUser(req, reply);
+  const b = shape<{ challengeId: string; response: unknown }>(body, { challengeId: [isId, true], response: [isObject, true] });
+  const c = await takeChallenge(b.challengeId, 'add');
+  if (c.user_id !== user.id) throw new HttpError(400, 'challenge_expired', 'This took too long. Please try again.');
+  const cred = await checkRegistration(req, c, b.response);
+  await savePasskey(sql, user.id, cred);
+  return { me: await meOf(user) };
+});
 
 route('POST', '/auth/logout', async ({ reply, req }) => {
   const user = await currentUser(req, reply);
@@ -1080,8 +1067,8 @@ route('GET', '/me', async ({ req, reply }) => ({ me: await meOf(await currentUse
 
 route('PATCH', '/me', async ({ req, reply, body }) => {
   const user = await currentUser(req, reply);
-  const b = shape<{ name?: string; about?: string; readReceipts?: boolean; presence?: boolean; lang?: string }>(body, {
-    name: [str(0, 200), false], about: [str(0, 500), false], readReceipts: [(v) => typeof v === 'boolean', false], presence: [(v) => typeof v === 'boolean', false],
+  const b = shape<{ name?: string; about?: string; readReceipts?: boolean; presence?: boolean; lang?: string; username?: string }>(body, {
+    username: [str(0, 21), false], name: [str(0, 200), false], about: [str(0, 500), false], readReceipts: [(v) => typeof v === 'boolean', false], presence: [(v) => typeof v === 'boolean', false],
     lang: [(v) => v === 'en' || v === 'de', false],
   });
   if (b.lang !== undefined) {
@@ -1100,6 +1087,17 @@ route('PATCH', '/me', async ({ req, reply, body }) => {
     await sql`update haven.users set name = ${name} where id = ${user.id}`;
   }
   if (b.about !== undefined) await sql`update haven.users set about = ${cleanLine(b.about, 140)} where id = ${user.id}`;
+  if (b.username !== undefined) {
+    const handle = b.username.replace(/^@/, '').toLowerCase();
+    if (!handle) await sql`update haven.users set username = null where id = ${user.id}`;
+    else {
+      if (!USERNAME.test(handle)) throw new HttpError(400, 'invalid_username', 'Usernames have 3–20 letters, numbers, dots or underscores.');
+      await enforce(`username:${user.id}`, 20, HOUR);
+      const [taken] = await sql`select 1 from haven.users where username = ${handle} and id <> ${user.id}`;
+      if (taken) throw new HttpError(400, 'username_taken', 'This username is already taken.');
+      await sql`update haven.users set username = ${handle} where id = ${user.id}`;
+    }
+  }
   await broadcast(await contactsOf(user.id), 'profiles');
   return { me: await meOf(user) };
 });
@@ -1130,27 +1128,9 @@ route('DELETE', '/me/avatar', async ({ req, reply }) => {
   return { me: await meOf(user) };
 });
 
-route('PUT', '/me/pin', async ({ req, reply, body }) => {
-  const user = await currentUser(req, reply);
-  const { pin } = shape<{ pin: string }>(body, { pin: [str(4, 12, /^\d+$/), true] });
-  await enforce(`setpin:${user.id}`, 10, HOUR);
-  await sql`update haven.users set pin_hash = ${await hashPin(pin)}, pin_failures = 0, pin_locked_until = 0 where id = ${user.id}`;
-  return { me: await meOf(user) };
-});
-
-route('DELETE', '/me/pin', async ({ req, reply, body }) => {
-  const user = await currentUser(req, reply);
-  const { pin } = shape<{ pin: string }>(body, { pin: [str(4, 12, /^\d+$/), true] });
-  await enforce(`setpin:${user.id}`, 10, HOUR);
-  if (user.pin_hash && !(await verifyPin(pin, user.pin_hash))) throw new HttpError(400, 'invalid_pin', 'Wrong PIN.');
-  await sql`update haven.users set pin_hash = null where id = ${user.id}`;
-  return { me: await meOf(user) };
-});
-
 route('DELETE', '/me', async ({ req, reply, body }) => {
   const user = await currentUser(req, reply);
-  const { confirmPhone } = shape<{ confirmPhone: string }>(body, { confirmPhone: [PHONE_IN, true] });
-  if (normalizePhone(confirmPhone) !== user.phone) throw new HttpError(400, 'confirm_mismatch', 'The number does not match your account.');
+  shape<{ confirm: string }>(body, { confirm: [(v) => v === 'DELETE', true] });
   const contacts = await contactsOf(user.id);
   await sql.begin(async (tx) => {
     const groups = await tx`select c.id from haven.conversations c join haven.members m on m.conversation_id = c.id
@@ -1206,12 +1186,22 @@ route('GET', '/avatars/:userId', async ({ req, reply, params }) => {
   return new Response(row.data, { status: 200, headers });
 });
 
+// Find someone by @username, or by the phone number of an older account.
 route('POST', '/users/lookup', async ({ req, reply, body }) => {
   const user = await currentUser(req, reply);
-  const { phone: input } = shape<{ phone: string }>(body, { phone: [PHONE_IN, true] });
-  const phone = normalizePhone(input);
-  if (!phone) throw new HttpError(400, 'invalid_phone', 'Please enter a valid mobile number.');
+  const b = shape<{ phone?: string; query?: string }>(body, { phone: [PHONE_IN, false], query: [str(1, 40), false] });
+  const input = (b.query ?? b.phone ?? '').trim();
   await enforce(`lookup:${user.id}`, 60, HOUR);
+  const handle = input.replace(/^@/, '').toLowerCase();
+  if (input.startsWith('@') || /[a-z_]/i.test(input)) {
+    if (!USERNAME.test(handle)) throw new HttpError(400, 'invalid_username', 'Usernames have 3–20 letters, numbers, dots or underscores.');
+    const [found] = await sql`select * from haven.users where username = ${handle}`;
+    if (!found || !found.name) return { found: false, phone: '', username: handle };
+    if (found.id === user.id) throw new HttpError(400, 'is_self', 'That is your own username.');
+    return { found: true, phone: '', username: handle, user: publicProfile(found, (await devicesOf([found.id])).get(found.id) ?? []) };
+  }
+  const phone = normalizePhone(input);
+  if (!phone) throw new HttpError(400, 'invalid_phone', 'Enter a @username or a phone number.');
   const [found] = await sql`select * from haven.users where phone = ${phone}`;
   if (!found || !found.name) return { found: false, phone };
   if (found.id === user.id) throw new HttpError(400, 'is_self', 'That is your own number.');
@@ -1815,7 +1805,7 @@ route('DELETE', '/push/subscribe', async ({ req, reply, body }) => {
   return ok;
 });
 
-route('GET', '/health', async () => ({ ok: true, verification: Boolean(await botToken()) }), false);
+route('GET', '/health', async () => ok, false);
 
 // ------------------------------------------------------------------ server
 
@@ -1843,7 +1833,6 @@ Deno.serve(async (req) => {
       await circleTick();
       return new Response(null, { status: 204 });
     }
-    if (path === '/telegram/webhook' && req.method === 'POST') return await telegramWebhook(req);
 
     const match = routes.find((r) => r.method === req.method && r.pattern.test(path));
     if (!match) throw new HttpError(404, 'not_found', 'Not found.');

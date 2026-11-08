@@ -234,7 +234,7 @@ function ContactShareSheet({ conv, close }: { conv: Conv; close: () => Promise<v
           <>
             <h2 class="list-heading">People on Haven</h2>
             <div class="plain-list">
-              {people.map((p) => (
+              {people.filter((p) => p.phone).map((p) => (
                 <button key={p.id} class="plain-row person" onClick={() => share(displayName(p), p.phone)}>
                   <Avatar id={p.id} name={displayName(p)} src={avatarUrl(p)} size={40} />
                   <span class="plain-row-text">

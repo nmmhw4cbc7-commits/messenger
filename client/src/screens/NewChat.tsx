@@ -1,32 +1,40 @@
 import { useMemo, useState } from 'preact/hooks';
-import { parsePhoneNumberFromString } from 'libphonenumber-js/min';
 import { useStore, type Profile } from '../lib/store';
 import { avatarUrl, displayName, lookupPhone, openDirect, createGroup } from '../lib/engine';
-import { guessCountry, prettyPhone, toE164 } from '../lib/phone';
+import { guessCountry, prettyPhone, toE164, handleOf } from '../lib/phone';
 import { errorMessage } from '../lib/api';
 import { Avatar, Button, Spinner, toast, useAsync } from '../ui/components';
-import { PhoneField, type PhoneValue } from '../ui/PhoneField';
 import { getNav } from '../ui/nav';
-import { Check, ChevronLeft, ChevronRight, Contacts, People, Share } from '../ui/icons';
+import { Check, ChevronLeft, ChevronRight, People, Share } from '../ui/icons';
 import { ChatScreen } from './Chat';
 
-type Lookup = { state: 'idle' } | { state: 'found'; user: Profile } | { state: 'missing'; phone: string } | { state: 'error'; message: string };
+type Lookup = { state: 'idle' } | { state: 'found'; user: Profile } | { state: 'missing'; phone: string; label: string } | { state: 'error'; message: string };
 
-const contactPickerSupported = () => 'contacts' in navigator && 'ContactsManager' in window;
-
-async function pickContactNumber(): Promise<string | null> {
-  try {
-    const nav = navigator as Navigator & { contacts: { select(props: string[], opts: { multiple: boolean }): Promise<{ tel?: string[] }[]> } };
-    const [contact] = await nav.contacts.select(['tel'], { multiple: false });
-    return contact?.tel?.[0] ?? null;
-  } catch {
-    return null;
-  }
+/** "@anna", "anna" or a phone number → what to send to the lookup, or null if it can't be either. */
+function searchTerm(raw: string): string | null {
+  const v = raw.trim();
+  if (!v) return null;
+  if (/^[+\d][\d\s()/.-]*$/.test(v)) return toE164(v, guessCountry());
+  const handle = v.replace(/^@/, '').toLowerCase();
+  return /^[a-z0-9_.]{3,20}$/.test(handle) ? `@${handle}` : null;
 }
 
-function phoneValueFrom(raw: string, fallback: PhoneValue): PhoneValue {
-  const parsed = parsePhoneNumberFromString(raw, fallback.country);
-  return parsed?.country ? { country: parsed.country, national: parsed.formatNational() } : { ...fallback, national: raw };
+function SearchField({ value, onChange, onSubmit, autoFocus }: { value: string; onChange: (v: string) => void; onSubmit: () => void; autoFocus?: boolean }) {
+  return (
+    <input
+      class="field"
+      type="text"
+      placeholder="@username or phone number"
+      aria-label="Username or phone number"
+      autoCapitalize="none"
+      autoCorrect="off"
+      spellcheck={false}
+      autoFocus={autoFocus}
+      value={value}
+      onInput={(e) => onChange((e.target as HTMLInputElement).value)}
+      onKeyDown={(e) => e.key === 'Enter' && onSubmit()}
+    />
+  );
 }
 
 /** Everyone we already share a chat with. */
@@ -40,7 +48,7 @@ function useKnownPeople() {
   }, [convs, meId]);
 }
 
-export async function invite(phone: string) {
+export async function invite(phone = '') {
   const text = `I’m using Haven for private, end-to-end encrypted messages. Join me: ${location.origin}`;
   if (navigator.share) {
     try {
@@ -50,7 +58,8 @@ export async function invite(phone: string) {
       if ((err as Error).name === 'AbortError') return;
     }
   }
-  location.href = `sms:${encodeURIComponent(phone)}?&body=${encodeURIComponent(text)}`;
+  if (phone) location.href = `sms:${encodeURIComponent(phone)}?&body=${encodeURIComponent(text)}`;
+  else navigator.clipboard?.writeText(text).then(() => toast('Invite copied'), () => {});
 }
 
 export function NewChatSheet({ close }: { close: () => Promise<void> }) {
@@ -65,19 +74,19 @@ async function openChatFromSheet(close: () => Promise<void>, convId: string) {
 
 function DirectStep({ close, onGroup }: { close: () => Promise<void>; onGroup: () => void }) {
   const known = useKnownPeople();
-  const [value, setValue] = useState<PhoneValue>({ country: guessCountry(), national: '' });
+  const [value, setValue] = useState('');
   const [lookup, setLookup] = useState<Lookup>({ state: 'idle' });
   const [busy, run] = useAsync();
-  const e164 = toE164(value.national, value.country);
 
   const find = () => {
-    if (!e164) {
-      setLookup({ state: 'error', message: 'Please enter a valid mobile number.' });
+    const term = searchTerm(value);
+    if (!term) {
+      setLookup({ state: 'error', message: 'Enter a @username (3–20 letters, numbers, dots or underscores) or a phone number.' });
       return;
     }
     run(async () => {
-      const res = await lookupPhone(e164);
-      setLookup(res.found && res.user ? { state: 'found', user: res.user } : { state: 'missing', phone: res.phone });
+      const res = await lookupPhone(term);
+      setLookup(res.found && res.user ? { state: 'found', user: res.user } : { state: 'missing', phone: res.phone, label: res.phone ? prettyPhone(res.phone) : `@${res.username}` });
     }, (err) => setLookup({ state: 'error', message: errorMessage(err) }));
   };
 
@@ -95,17 +104,9 @@ function DirectStep({ close, onGroup }: { close: () => Promise<void>; onGroup: (
       </div>
       <div class="sheet-scroll">
         <div class="sheet-content">
-          <PhoneField value={value} onChange={(v) => { setValue(v); setLookup({ state: 'idle' }); }} autoFocus onSubmit={find} />
+          <SearchField value={value} onChange={(v) => { setValue(v); setLookup({ state: 'idle' }); }} autoFocus onSubmit={find} />
           <div class="row-gap">
-            <Button onClick={find} loading={busy && lookup.state === 'idle'} disabled={!value.national}>Find</Button>
-            {contactPickerSupported() && (
-              <button class="icon-button-large" aria-label="Choose from contacts" onClick={async () => {
-                const tel = await pickContactNumber();
-                if (tel) { setValue(phoneValueFrom(tel, value)); setLookup({ state: 'idle' }); }
-              }}>
-                <Contacts size={24} />
-              </button>
-            )}
+            <Button onClick={find} loading={busy && lookup.state === 'idle'} disabled={!value.trim()}>Find</Button>
           </div>
 
           {lookup.state === 'error' && <p class="form-error shown" role="alert">{lookup.message}</p>}
@@ -114,15 +115,15 @@ function DirectStep({ close, onGroup }: { close: () => Promise<void>; onGroup: (
               <Avatar id={lookup.user.id} name={displayName(lookup.user)} src={avatarUrl(lookup.user)} size={48} />
               <span class="result-text">
                 <strong>{displayName(lookup.user)}</strong>
-                <span>{prettyPhone(lookup.user.phone)}</span>
+                <span>{handleOf(lookup.user)}</span>
               </span>
               {busy ? <Spinner /> : <ChevronRight size={20} class="muted" />}
             </button>
           )}
           {lookup.state === 'missing' && (
             <div class="invite-card">
-              <strong>{prettyPhone(lookup.phone)} isn’t on Haven yet</strong>
-              <p>Send an invite. Once they join, you can write to them here.</p>
+              <strong>{`${lookup.label} isn’t on Haven yet`}</strong>
+              <p>Check the spelling, or send an invite. Once they join, you can write to them here.</p>
               <Button variant="secondary" onClick={() => invite(lookup.phone)}><Share size={19} /> Invite to Haven</Button>
             </div>
           )}
@@ -144,7 +145,7 @@ function DirectStep({ close, onGroup }: { close: () => Promise<void>; onGroup: (
                   <Avatar id={p.id} name={displayName(p)} src={avatarUrl(p)} size={40} />
                   <span class="plain-row-text">
                     <span class="plain-row-title">{displayName(p)}</span>
-                    <span class="plain-row-sub">{prettyPhone(p.phone)}</span>
+                    <span class="plain-row-sub">{handleOf(p)}</span>
                   </span>
                 </button>
               ))}
@@ -169,7 +170,7 @@ export function PeoplePicker({ title, confirmLabel, exclude, onCancel, onConfirm
   const knownAll = useKnownPeople();
   const [extra, setExtra] = useState<Profile[]>([]);
   const [selected, setSelected] = useState<Map<string, Profile>>(new Map());
-  const [value, setValue] = useState<PhoneValue>({ country: guessCountry(), national: '' });
+  const [value, setValue] = useState('');
   const [message, setMessage] = useState<{ text: string; phone?: string } | null>(null);
   const [busy, run] = useAsync();
 
@@ -187,15 +188,15 @@ export function PeoplePicker({ title, confirmLabel, exclude, onCancel, onConfirm
   };
 
   const addByNumber = () => {
-    const e164 = toE164(value.national, value.country);
-    if (!e164) {
-      setMessage({ text: 'Please enter a valid mobile number.' });
+    const term = searchTerm(value);
+    if (!term) {
+      setMessage({ text: 'Enter a @username or a phone number.' });
       return;
     }
     run(async () => {
-      const res = await lookupPhone(e164);
+      const res = await lookupPhone(term);
       if (!res.found || !res.user) {
-        setMessage({ text: `${prettyPhone(res.phone)} isn’t on Haven yet.`, phone: res.phone });
+        setMessage({ text: `${res.phone ? prettyPhone(res.phone) : `@${res.username}`} isn’t on Haven yet.`, phone: res.phone || undefined });
         return;
       }
       const user = res.user;
@@ -205,7 +206,7 @@ export function PeoplePicker({ title, confirmLabel, exclude, onCancel, onConfirm
       }
       setExtra((e) => [user, ...e.filter((x) => x.id !== user.id)]);
       setSelected((s) => new Map(s).set(user.id, user));
-      setValue({ ...value, national: '' });
+      setValue('');
       setMessage(null);
     }, (err) => setMessage({ text: errorMessage(err) }));
   };
@@ -229,8 +230,8 @@ export function PeoplePicker({ title, confirmLabel, exclude, onCancel, onConfirm
           </div>
         )}
         <div class="sheet-content">
-          <PhoneField value={value} onChange={(v) => { setValue(v); setMessage(null); }} onSubmit={addByNumber} />
-          <Button variant="secondary" onClick={addByNumber} loading={busy} disabled={!value.national}>Add by number</Button>
+          <SearchField value={value} onChange={(v) => { setValue(v); setMessage(null); }} onSubmit={addByNumber} />
+          <Button variant="secondary" onClick={addByNumber} loading={busy} disabled={!value.trim()}>Add</Button>
           {message && (
             <div class="inline-message">
               <span>{message.text}</span>
@@ -245,14 +246,14 @@ export function PeoplePicker({ title, confirmLabel, exclude, onCancel, onConfirm
                 <Avatar id={p.id} name={displayName(p)} src={avatarUrl(p)} size={40} />
                 <span class="plain-row-text">
                   <span class="plain-row-title">{displayName(p)}</span>
-                  <span class="plain-row-sub">{prettyPhone(p.phone)}</span>
+                  <span class="plain-row-sub">{handleOf(p)}</span>
                 </span>
                 <span class={`check-circle${selected.has(p.id) ? ' on' : ''}`}><Check size={15} stroke={3} /></span>
               </button>
             ))}
           </div>
         ) : (
-          <p class="muted center pad">Add people by their phone number.</p>
+          <p class="muted center pad">Add people by their @username.</p>
         )}
       </div>
     </div>
@@ -298,7 +299,7 @@ function GroupFlow({ close, onBack }: { close: () => Promise<void>; onBack: () =
               <Avatar id={p.id} name={displayName(p)} src={avatarUrl(p)} size={40} />
               <span class="plain-row-text">
                 <span class="plain-row-title">{displayName(p)}</span>
-                <span class="plain-row-sub">{prettyPhone(p.phone)}</span>
+                <span class="plain-row-sub">{handleOf(p)}</span>
               </span>
             </div>
           ))}

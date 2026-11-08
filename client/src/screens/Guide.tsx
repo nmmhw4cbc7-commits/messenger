@@ -49,10 +49,12 @@ function Guide({ close }: { close: () => Promise<void> }) {
 // ------------------------------------------------------------------ what's new
 
 /** Bump with every update that has something to tell. */
-export const WHATS_NEW_VERSION = '2026-11-08b';
+export const WHATS_NEW_VERSION = '2026-11-08c';
 const SEEN_KEY = 'haven.whatsNewSeen';
 
 const WHATS_NEW: string[] = [
+  'No more Telegram: you sign in with a passkey (Face ID). No phone number needed.',
+  'Pick a @username in your profile, so friends can find you.',
   'You can be in several friend groups. Switch or add one with the button next to the bell.',
   'Haven is now available in German. Change it in Settings → Language.',
   'Every friend group has one invite link. Whoever opens it is asked whether to join.',

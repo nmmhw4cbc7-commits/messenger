@@ -21,6 +21,7 @@ const ChatsPane = memo(() => <ChatsTab />);
 const SettingsPane = memo(() => <SettingsTab />);
 
 import { checkBackupOnStart } from './Backup';
+import { maybeAskPasskey } from './Passkey';
 
 const PLACE_KEY = 'haven.place';
 /** Where the user was within the last 30 minutes, if anywhere. */
@@ -84,7 +85,7 @@ export function Home() {
     };
     navigator.serviceWorker?.addEventListener('message', onMessage);
     // After an update: what's new. Otherwise (or later) the backup offer, never on top of another sheet.
-    const timer = setTimeout(() => { if (openLayers() === 0 && !maybeShowWhatsNew()) checkBackupOnStart(); }, 1800);
+    const timer = setTimeout(() => { if (openLayers() === 0 && !maybeAskPasskey() && !maybeShowWhatsNew()) checkBackupOnStart(); }, 1800);
     return () => { clearTimeout(timer); navigator.serviceWorker?.removeEventListener('message', onMessage); };
   }, []);
   const unread = useStore((s) => Object.values(s.convs).reduce((n, c) => n + (c.hidden ? 0 : c.unread), 0));
@@ -133,7 +134,7 @@ function ChatsTab() {
     const q = query.trim().toLowerCase();
     const digits = q.replace(/\D/g, '');
     const matches = (c: Conv) =>
-      !q || convTitle(c, me?.id).toLowerCase().includes(q) || (digits.length >= 3 && c.members.some((m) => m.id !== me?.id && m.phone.includes(digits)));
+      !q || convTitle(c, me?.id).toLowerCase().includes(q) || (digits.length >= 3 && c.members.some((m) => m.id !== me?.id && (m.phone || '').includes(digits))) || c.members.some((m) => m.id !== me?.id && !!m.username && m.username.includes(q.replace(/^@/, '')));
     return Object.values(convs)
       .filter((c) => !c.hidden && (c.last || c.kind === 'group' || c.createdBy === me?.id || c.updatedAt > c.createdAt))
       .filter(matches)

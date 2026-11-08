@@ -3011,3 +3011,9 @@ button.vlog-reaction:active { transform: scale(0.94); }
 
 /* Avatar editor: zoomed out, a blurred copy fills the circle around the picture */
 .avatar-editor-blur { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(1.15); border-radius: 50%; background-size: cover; background-position: center; filter: blur(18px) brightness(0.9); clip-path: circle(43.5%); pointer-events: none; }
+
+/* @username input: the @ sits inside the field. */
+.username-field { position: relative; width: 100%; }
+.username-field > span { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: var(--text-2, currentColor); opacity: .6; pointer-events: none; font-family: var(--mono, inherit); }
+.username-field > .field { padding-left: 34px; }
+.welcome-actions .btn svg { margin-right: 6px; vertical-align: -3px; }

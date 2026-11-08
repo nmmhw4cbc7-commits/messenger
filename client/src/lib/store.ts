@@ -13,7 +13,10 @@ export interface Me {
   name: string;
   about: string;
   avatarVersion: number;
-  hasPin: boolean;
+  /** @handle others can find this account by ('' if none). */
+  username?: string;
+  /** Number of passkeys on this account. */
+  passkeys?: number;
   /** This device. */
   deviceId: string;
   /** All devices of this account (this one included). */
@@ -28,6 +31,7 @@ export interface Me {
 export interface Profile {
   id: string;
   phone: string;
+  username?: string;
   name: string;
   about: string;
   avatarVersion: number;
