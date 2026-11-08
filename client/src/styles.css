@@ -3000,7 +3000,6 @@ button.vlog-reaction:active { transform: scale(0.94); }
 .group-switch { display: inline-flex; align-items: center; gap: 6px; max-width: 46vw; height: 40px; padding: 0 12px 0 14px; border: 0; border-radius: 999px; background: transparent; box-shadow: inset 0 0 0 1px var(--sep); color: var(--ink); font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.1em; text-transform: uppercase; }
 .group-switch:active { transform: scale(0.96); }
 .group-switch-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.group-switch-count { display: grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--signal); color: #fff; font-size: 10px; letter-spacing: 0; }
 .group-list { list-style: none; margin: 0 0 6px; padding: 0; border-radius: 20px; overflow: hidden; box-shadow: inset 0 0 0 1px var(--line); }
 .group-list li + li { border-top: 1px solid var(--line); }
 .group-row { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 14px 16px; border: 0; background: none; color: var(--text); font: inherit; font-size: 16.5px; text-align: left; }
