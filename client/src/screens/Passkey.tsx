@@ -22,6 +22,15 @@ export function maybeAskPasskey(): boolean {
   return true;
 }
 
+/** Opened from the "secure your account" notification. */
+export function openPasskeySheet() {
+  const me = getState().me;
+  if (!me) return;
+  if ((me.passkeys ?? 0) > 0) { toast('Your account already has a passkey.'); return; }
+  try { localStorage.setItem(ASKED, String(Date.now())); } catch { /* fine */ }
+  getNav().present((close) => <PasskeySheet close={close} />, { variant: 'full' });
+}
+
 function PasskeySheet({ close }: { close: () => Promise<void> }) {
   const [busy, run] = useAsync();
   const create = () => run(async () => {

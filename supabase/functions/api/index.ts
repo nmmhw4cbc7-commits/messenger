@@ -349,8 +349,14 @@ async function sendPush(userIds: string[]) {
 async function sendPendingAnnouncement() {
   const [row] = await sql`delete from haven.kv where key = 'announce' returning value`;
   if (!row) return;
-  let a: { title?: unknown; body?: unknown; open?: unknown };
+  let a: { title?: unknown; body?: unknown; open?: unknown; note?: unknown };
   try { a = JSON.parse(row.value); } catch { return; }
+  // {note: 'passkey'}: everyone without a passkey yet, in their language.
+  if (a.note === 'passkey') {
+    const ids = (await sql`select u.id from haven.users u where not exists (select 1 from haven.passkeys p where p.user_id = u.id)`).map((r) => r.id as string);
+    await notifyUsers(ids, 'passkey', '', 'passkey');
+    return;
+  }
   if (typeof a.title !== 'string' || typeof a.body !== 'string') return;
   const payload = JSON.stringify({ t: 'announce', title: a.title.slice(0, 80), body: a.body.slice(0, 200), open: typeof a.open === 'string' ? a.open.slice(0, 40) : undefined });
   const subs = await sql`select endpoint, p256dh, auth from haven.push_subscriptions`;
@@ -377,6 +383,10 @@ const NOTE: Record<string, { title: Text; body: Text }> = {
   joined: {
     title: { en: '{name} joined your friend group 👋', de: '{name} ist deiner Freundesgruppe beigetreten 👋' },
     body: { en: 'Say hi on the Today screen.', de: 'Sag Hallo auf der Heute-Seite.' },
+  },
+  passkey: {
+    title: { en: 'Secure your Haven account 🔑', de: 'Sichere dein Haven-Konto 🔑' },
+    body: { en: 'Set up a passkey with Face ID, so you can always sign in again. Tap to do it now.', de: 'Richte einen Passkey mit Face ID ein, damit du dich immer wieder anmelden kannst. Tippe, um es jetzt zu machen.' },
   },
   calling: {
     title: { en: '{name} is calling 📞', de: '{name} ruft an 📞' },
