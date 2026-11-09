@@ -1,6 +1,6 @@
 // Voice message -> text, on this phone. See transcribe.worker.ts.
 
-import { mediaUrl } from './media';
+import { mediaBlob } from './media';
 import type { Msg } from './store';
 
 export type TranscribeStep = { type: 'download'; pct: number } | { type: 'working' };
@@ -50,7 +50,7 @@ async function toPcm16k(blob: Blob): Promise<Float32Array> {
 /** lang: 'de' or 'en' (Whisper here can't tell the language by itself). */
 export async function transcribe(msg: Msg, lang: 'de' | 'en', step: (s: TranscribeStep) => void): Promise<string> {
   if (!msg.media) throw new Error('No voice message.');
-  const blob = await (await fetch(await mediaUrl(msg.id, msg.media))).blob();
+  const blob = await mediaBlob(msg.id, msg.media);
   const audio = await toPcm16k(blob);
   const id = `${msg.id}:${Date.now()}`;
   return new Promise((done, fail) => {
