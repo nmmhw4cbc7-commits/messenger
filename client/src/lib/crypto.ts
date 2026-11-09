@@ -166,11 +166,15 @@ export const TIMER_CHOICES = [0, 3600, 86400, 604800];
 function cleanPayload(p: unknown): Payload | null {
   const out = cleanPayloadBody(p);
   if (!out) return null;
-  const ttl = (p as Record<string, unknown>).ttl;
-  if (['text', 'media', 'location', 'contact', 'poll'].includes(out.type) && typeof ttl === 'number' && TIMER_CHOICES.includes(ttl) && ttl > 0) {
-    return { ...out, ttl } as unknown as Payload;
+  const o = p as Record<string, unknown>;
+  const extra: Record<string, unknown> = {};
+  if (['text', 'media', 'location', 'contact', 'poll'].includes(out.type) && typeof o.ttl === 'number' && TIMER_CHOICES.includes(o.ttl) && o.ttl > 0) extra.ttl = o.ttl;
+  // Forwarded (how often), and "the sender doesn't allow forwarding".
+  if (['text', 'media', 'location', 'contact'].includes(out.type)) {
+    if (Number.isInteger(o.fwd) && (o.fwd as number) >= 1 && (o.fwd as number) <= 1000) extra.fwd = o.fwd;
+    if (o.nf === true) extra.nf = true;
   }
-  return out;
+  return Object.keys(extra).length ? ({ ...out, ...extra } as unknown as Payload) : out;
 }
 
 function cleanPayloadBody(p: unknown): Payload | null {

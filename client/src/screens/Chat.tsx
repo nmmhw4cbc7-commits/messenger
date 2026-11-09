@@ -3,13 +3,13 @@ import type { JSX } from 'preact';
 import { useStore, type Conv, type Msg, type ReplyRef } from '../lib/store';
 import {
   avatarUrl, chatAvatarUrl, convTitle, displayName, loadMessages, otherMember, sendText, sendTyping, typingLabel, setOpenConv, retry, deleteMessage, deleteForEveryone, editMessage, acceptKeyChange,
-  react, isReadByAll, summarize, setPinned, timerLabel, setStatusBarColor,
+  react, isReadByAll, summarize, setPinned, timerLabel, setStatusBarColor, forwardBlock, forwardMessage, MAX_FORWARD,
 } from '../lib/engine';
 import { MediaView, LocationCard, ContactCard, PollCard, VoiceRecorder, openAttachSheet, Mic, Plus } from './Attachments';
 import { formatDay, formatTime, sameDay } from '../lib/format';
 import { Avatar, Button, confirmAction, toast } from '../ui/components';
 import { getNav, goBack, useNav } from '../ui/nav';
-import { Phone } from '../ui/icons';
+import { Phone, ForwardIcon } from '../ui/icons';
 import { startCall, callsSupported } from '../lib/call';
 import { ArrowUp, ChevronLeft, Clock, Alert, Check, CheckDouble, Lock, Reply, Close, Copy, Trash, Pencil, Pin, Timer } from '../ui/icons';
 import { haptic } from '../lib/haptics';
@@ -434,6 +434,9 @@ function Bubble({ msg, conv, meId, first, last, onReply, onMenu, nameOf }: {
             onClick={() => msg.status === 'failed' && openMenu()}
           >
             {showSender && <span class="bubble-sender">{senderName}</span>}
+            {msg.forwarded && !msg.deleted ? (
+              <span class="bubble-forwarded"><ForwardIcon size={13} /> {msg.forwarded >= 5 ? 'Forwarded many times' : 'Forwarded'}</span>
+            ) : null}
             {msg.reply && (
               <button class="quote" onClick={(e) => { e.stopPropagation(); scrollToMessage(msg.reply!.id); }}>
                 <span class="quote-name">{nameOf(msg.reply.senderId)}</span>
@@ -504,17 +507,13 @@ function ContextMenu({ state, meId, canReply, pinned, onClose, onReply }: {
   const hasBar = msg.kind !== 'undecryptable' && msg.status !== 'pending' && msg.status !== 'failed' && !msg.deleted;
   const barHeight = hasBar ? 58 : 0;
   const canEdit = sent && msg.kind === 'text';
-  const actionCount = (canReplyTo && canReply ? 2 : 0) + (msg.kind === 'text' && !msg.deleted ? 1 : 0) + (canEdit ? 1 : 0) + (msg.status === 'failed' ? 1 : 0) + (sent ? 1 : 0) + 1;
-  const actionsHeight = 34 + 48 * actionCount + 8;
-  const bubbleH = Math.min(rect.height, vh * 0.3);
-  const safeTop = 56;
-  const safeBottom = 40; // includes the gaps between bar, bubble and actions
-  // The bubble stays where it was when possible; the whole stack is shifted to fit on screen.
-  const top = Math.max(safeTop, Math.min(rect.top - barHeight, vh - safeBottom - barHeight - bubbleH - actionsHeight));
-  const side = mine ? { right: `${Math.max(10, window.innerWidth - rect.right)}px` } : { left: `${Math.max(10, rect.left)}px` };
 
   const actions: { label: string; icon: JSX.Element; danger?: boolean; run: () => void }[] = [];
   if (canReplyTo && canReply) actions.push({ label: 'Reply', icon: <Reply size={19} />, run: onReply });
+  const fwdBlock = forwardBlock(msg);
+  if (fwdBlock !== 'unavailable') {
+    actions.push({ label: 'Forward', icon: <ForwardIcon size={19} />, run: () => (fwdBlock ? toast(fwdBlock, 'error') : openForwardSheet(msg)) });
+  }
   if (canEdit) actions.push({ label: 'Edit', icon: <Pencil size={19} />, run: () => openEditSheet(msg) });
   if (canReplyTo && canReply && msg.kind !== 'system' && msg.kind !== 'notice') {
     actions.push({ label: pinned ? 'Unpin' : 'Pin', icon: <Pin size={19} />, run: () => setPinned(msg, !pinned).catch((err) => toast(err instanceof Error ? err.message : 'Could not pin', 'error')) });
@@ -548,6 +547,14 @@ function ContextMenu({ state, meId, canReply, pinned, onClose, onReply }: {
   }
   actions.push({ label: 'Delete for me', icon: <Trash size={19} />, danger: true, run: () => deleteMessage(msg) });
 
+  const actionsHeight = 34 + 48 * actions.length + 8;
+  const bubbleH = Math.min(rect.height, vh * 0.3);
+  const safeTop = 56;
+  const safeBottom = 40; // includes the gaps between bar, bubble and actions
+  // The bubble stays where it was when possible; the whole stack is shifted to fit on screen.
+  const top = Math.max(safeTop, Math.min(rect.top - barHeight, vh - safeBottom - barHeight - bubbleH - actionsHeight));
+  const side = mine ? { right: `${Math.max(10, window.innerWidth - rect.right)}px` } : { left: `${Math.max(10, rect.left)}px` };
+
   return (
     <div class={`context-layer${closing ? ' closing' : ''}`} onClick={() => close()}>
       <div class="context-stack" style={{ top: `${top}px`, ...side }} onClick={(e) => e.stopPropagation()}>
@@ -574,6 +581,59 @@ function ContextMenu({ state, meId, canReply, pinned, onClose, onReply }: {
             <button key={a.label} class={a.danger ? 'danger' : ''} onClick={() => close(a.run)}>
               <span>{a.label}</span>
               {a.icon}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ forward
+
+function openForwardSheet(msg: Msg) {
+  getNav().present((close) => <ForwardSheet msg={msg} close={close} />, { variant: 'full' });
+}
+
+function ForwardSheet({ msg, close }: { msg: Msg; close: () => Promise<void> }) {
+  const convs = useStore((s) => s.convs);
+  const meId = useStore((s) => s.me?.id);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [q, setQ] = useState('');
+  const [busy, setBusy] = useState(false);
+  const list = Object.values(convs)
+    .filter((c) => !c.left && (!q || convTitle(c, meId).toLowerCase().includes(q.toLowerCase())))
+    .sort((a, b) => (b.last?.createdAt ?? b.updatedAt) - (a.last?.createdAt ?? a.updatedAt));
+  const toggle = (id: string) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : p.length >= MAX_FORWARD ? (toast(`You can forward to up to ${MAX_FORWARD} chats at once.`), p) : [...p, id]));
+  const send = async () => {
+    setBusy(true);
+    try {
+      const n = await forwardMessage(msg, picked);
+      await close();
+      toast(n === 1 ? 'Forwarded' : `Forwarded to ${n} chats`);
+    } catch (err) {
+      setBusy(false);
+      toast(err instanceof Error ? err.message : 'Could not forward', 'error');
+    }
+  };
+  return (
+    <div class="sheet-page">
+      <div class="sheet-header sheet-drag">
+        <button class="nav-button" onClick={() => close()}>Cancel</button>
+        <strong>Forward</strong>
+        <button class="nav-button bold" disabled={!picked.length || busy} onClick={send}>{busy ? <span class="spinner-inline" /> : 'Send'}</button>
+      </div>
+      <div class="sheet-scroll">
+        <div class="sheet-content">
+          <input class="field" type="search" placeholder="Search" aria-label="Search chats" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} />
+          <p class="fine-print left">{`Up to ${MAX_FORWARD} chats. The copy is marked “Forwarded” and encrypted again for each chat.`}</p>
+        </div>
+        <div class="plain-list">
+          {list.map((c) => (
+            <button key={c.id} class="plain-row person" role="checkbox" aria-checked={picked.includes(c.id)} onClick={() => toggle(c.id)}>
+              <Avatar id={c.kind === 'group' ? c.id : c.members.find((m) => m.id !== meId)?.id ?? c.id} name={convTitle(c, meId)} src={chatAvatarUrl(c, meId ?? '')} size={40} group={c.kind === 'group'} />
+              <span class="plain-row-text"><span class="plain-row-title" data-no-i18n>{convTitle(c, meId)}</span></span>
+              <span class={`check-circle${picked.includes(c.id) ? ' on' : ''}`}><Check size={15} stroke={3} /></span>
             </button>
           ))}
         </div>

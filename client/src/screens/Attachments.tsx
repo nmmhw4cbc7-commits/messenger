@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Conv, Msg, Profile } from '../lib/store';
 import { useStore } from '../lib/store';
+import { transcribe, transcribeSupported, speechModelReady } from '../lib/transcribe';
+import { t, currentLang } from '../lib/i18n';
 import {
-  avatarUrl, displayName, formatDuration, lookupPhone, markOpened, openDirect, sendContact, sendLocation, sendMedia, sendPoll, vote,
+  avatarUrl, displayName, formatDuration, lookupPhone, markOpened, openDirect, sendContact, sendLocation, sendMedia, sendPoll, vote, saveTranscript,
 } from '../lib/engine';
 import { mediaUrl, prepareVideo, preparePhoto, startRecording, type Recording } from '../lib/media';
 import { guessCountry, prettyPhone, toE164 } from '../lib/phone';
 import { errorMessage } from '../lib/api';
-import { Avatar, Button, Spinner, toast, useAsync } from '../ui/components';
+import { Avatar, Button, Spinner, confirmAction, toast, useAsync } from '../ui/components';
 import { PhoneField, type PhoneValue } from '../ui/PhoneField';
 import { getNav } from '../ui/nav';
 import { Camera, Close, Contacts, Lock, People, Plus, Trash, ArrowUp, Check } from '../ui/icons';
@@ -302,8 +304,10 @@ export function PollCard({ msg, conv, meId }: { msg: Msg; conv: Conv; meId: stri
   const votes = msg.votes ?? {};
   const mine = votes[meId] ?? [];
   const voters = Object.keys(votes).length;
-  const counts = poll.options.map((_, i) => Object.values(votes).filter((v) => v.includes(i)).length);
+  const whoChose = (i: number) => Object.entries(votes).filter(([, v]) => v.includes(i)).map(([id]) => id);
+  const counts = poll.options.map((_, i) => whoChose(i).length);
   const pending = msg.status === 'pending';
+  const member = (id: string) => conv.members.find((m) => m.id === id);
 
   const pick = (i: number) => {
     if (pending) return;
@@ -318,16 +322,70 @@ export function PollCard({ msg, conv, meId }: { msg: Msg; conv: Conv; meId: stri
       <div class="poll-question">{poll.question}</div>
       {poll.options.map((o, i) => {
         const pct = voters ? Math.round((counts[i] / voters) * 100) : 0;
+        const who = whoChose(i);
         return (
           <button key={i} class={`poll-option${mine.includes(i) ? ' chosen' : ''}`} onClick={(e) => { e.stopPropagation(); pick(i); }} disabled={pending}>
             <span class="poll-check">{mine.includes(i) && <Check size={13} stroke={3} />}</span>
             <span class="poll-text">{o}</span>
+            {who.length > 0 && (
+              <span class="poll-faces" aria-hidden="true">
+                {who.slice(0, 3).map((id) => {
+                  const m = member(id);
+                  return <span key={id} class="poll-face"><Avatar id={id} name={m ? displayName(m) : '?'} src={avatarUrl(m)} size={18} /></span>;
+                })}
+              </span>
+            )}
             <span class="poll-count">{counts[i]}</span>
             <span class="poll-bar" style={{ width: `${pct}%` }} />
           </button>
         );
       })}
-      <div class="poll-foot">{voters === 1 ? '1 vote' : `${voters} votes`} · {conv.members.length} members</div>
+      <button class="poll-foot" onClick={(e) => { e.stopPropagation(); if (voters) openVotes(msg, conv); }} disabled={!voters}>
+        {`${voters === 1 ? '1 vote' : `${voters} votes`} · ${voters ? 'View votes' : 'Votes are visible to the chat'}`}
+      </button>
+    </div>
+  );
+}
+
+function openVotes(msg: Msg, conv: Conv) {
+  getNav().present((close) => <VotesSheet msg={msg} conv={conv} close={close} />, { variant: 'card' });
+}
+
+/** Who voted for what (polls are not anonymous). */
+function VotesSheet({ msg, conv, close }: { msg: Msg; conv: Conv; close: () => Promise<void> }) {
+  const live = useStore((s) => s.messages[msg.convId]?.find((m) => m.id === msg.id)) ?? msg;
+  const votes = live.votes ?? {};
+  const poll = live.poll!;
+  return (
+    <div class="sheet-page">
+      <div class="sheet-header sheet-drag">
+        <span />
+        <strong>Votes</strong>
+        <button class="nav-button bold" onClick={() => close()}>Done</button>
+      </div>
+      <div class="sheet-scroll">
+        <div class="sheet-content"><p class="poll-sheet-q" data-no-i18n>{poll.question}</p></div>
+        {poll.options.map((o, i) => {
+          const who = Object.entries(votes).filter(([, v]) => v.includes(i)).map(([id]) => id);
+          return (
+            <div key={i}>
+              <h2 class="list-heading" data-no-i18n>{`${o} · ${who.length}`}</h2>
+              <div class="plain-list">
+                {who.length ? who.map((id) => {
+                  const m = conv.members.find((x) => x.id === id);
+                  const name = m ? displayName(m) : 'Former member';
+                  return (
+                    <div key={id} class="plain-row person">
+                      <Avatar id={id} name={name} src={avatarUrl(m)} size={36} />
+                      <span class="plain-row-text"><span class="plain-row-title" data-no-i18n>{name}</span></span>
+                    </div>
+                  );
+                }) : <p class="muted pad-x">No votes</p>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -500,6 +558,24 @@ function VoicePlayer({ msg }: { msg: Msg }) {
   const wave = media.wave?.length ? media.wave : Array.from({ length: 40 }, (_, i) => 0.25 + 0.5 * Math.abs(Math.sin(i * 1.7)));
 
   useEffect(() => () => { audio.current?.pause(); }, []);
+  const [working, setWorking] = useState('');
+
+  const startTranscript = async (lang: 'de' | 'en' = currentLang() === 'de' ? 'de' : 'en') => {
+    if (!speechModelReady() && !(await confirmAction({
+      title: 'Transcribe voice messages?',
+      message: 'Haven turns voice messages into text right on this phone. The voice message never leaves it. For this, a speech model (about 80 MB) is downloaded once – best on Wi-Fi.',
+      confirm: 'Download and transcribe',
+    }))) return;
+    setWorking(t('Preparing…'));
+    try {
+      const text = await transcribe(msg, lang, (st) => setWorking(st.type === 'download' ? `${t('Downloading speech model')} ${st.pct}%` : t('Transcribing…')));
+      await saveTranscript(msg.id, text, lang);
+    } catch (err) {
+      toast(err instanceof Error && /memory|abort/i.test(err.message) ? t('This phone has too little memory to transcribe.') : t('Could not transcribe this voice message.'), 'error');
+    } finally {
+      setWorking('');
+    }
+  };
 
   const toggle = async () => {
     if (state === 'playing') {
@@ -534,14 +610,28 @@ function VoicePlayer({ msg }: { msg: Msg }) {
   };
 
   return (
-    <div class="voice">
-      <button class="voice-play" onClick={(e) => { e.stopPropagation(); toggle(); }} aria-label={state === 'playing' ? 'Pause' : 'Play'}>
-        {state === 'loading' ? <Spinner size={16} /> : state === 'playing' ? <Pause /> : <Play />}
-      </button>
-      <span class="voice-wave" aria-hidden="true">
-        {wave.map((v, i) => <span key={i} class={i / wave.length < progress ? 'on' : ''} style={{ height: `${dotBar(v)}px` }} />)}
-      </span>
-      <span class="voice-time">{formatDuration(state === 'idle' ? media.duration ?? 0 : (audio.current?.currentTime ?? 0))}</span>
+    <div class="voice-block">
+      <div class="voice">
+        <button class="voice-play" onClick={(e) => { e.stopPropagation(); toggle(); }} aria-label={state === 'playing' ? 'Pause' : 'Play'}>
+          {state === 'loading' ? <Spinner size={16} /> : state === 'playing' ? <Pause /> : <Play />}
+        </button>
+        <span class="voice-wave" aria-hidden="true">
+          {wave.map((v, i) => <span key={i} class={i / wave.length < progress ? 'on' : ''} style={{ height: `${dotBar(v)}px` }} />)}
+        </span>
+        <span class="voice-time">{formatDuration(state === 'idle' ? media.duration ?? 0 : (audio.current?.currentTime ?? 0))}</span>
+        {!msg.transcript && !working && transcribeSupported() && msg.status !== 'pending' && (
+          <button class="voice-tx" onClick={(e) => { e.stopPropagation(); startTranscript(); }} aria-label="Transcribe">Aa</button>
+        )}
+      </div>
+      {working && <p class="voice-transcript working">{working}</p>}
+      {msg.transcript && !working && (
+        <div class="voice-transcript-wrap">
+          <p class="voice-transcript" data-no-i18n>{msg.transcript}</p>
+          <button class="voice-lang" onClick={(e) => { e.stopPropagation(); startTranscript(msg.transcriptLang === 'en' ? 'de' : 'en'); }}>
+            {msg.transcriptLang === 'en' ? 'Spoken in German?' : 'Spoken in English?'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
