@@ -1662,14 +1662,56 @@ route('POST', '/conversations/:id/redeliver', async ({ req, reply, params, body 
 
 const CALL_TYPES = ['offer', 'answer', 'ice', 'hangup', 'decline', 'busy'];
 
+// Relay (TURN) for networks that block direct connections, e.g. two phones on
+// mobile data. Cloudflare's TURN service is free up to 1,000 GB a month; set the
+// secrets CF_TURN_KEY_ID and CF_TURN_API_TOKEN to turn it on. Credentials are
+// short-lived and fetched per day, so nothing long-lived reaches the phones.
+let turnCache: { at: number; servers: unknown[] } | null = null;
+async function turnServers(): Promise<unknown[]> {
+  const keyId = Deno.env.get('CF_TURN_KEY_ID');
+  const token = Deno.env.get('CF_TURN_API_TOKEN');
+  if (!keyId || !token) return [];
+  if (turnCache && now() - turnCache.at < 6 * HOUR) return turnCache.servers;
+  try {
+    const res = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(keyId)}/credentials/generate-ice-servers`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ttl: 86400 }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) throw new Error(`turn ${res.status}`);
+    const data = await res.json();
+    const list = Array.isArray(data.iceServers) ? data.iceServers : data.iceServers ? [data.iceServers] : [];
+    turnCache = { at: now(), servers: list };
+    return list;
+  } catch (e) {
+    console.error('turn credentials', String(e));
+    return turnCache?.servers ?? [];
+  }
+}
+
 route('GET', '/calls/ice', async ({ req, reply }) => {
   await currentUser(req, reply);
-  const servers: unknown[] = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }];
+  const servers: unknown[] = [{ urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] }];
+  servers.push(...(await turnServers()));
   const turn = await kvGet('turn_servers');
   if (turn) {
     try { servers.push(...(JSON.parse(turn) as unknown[])); } catch { /* ignore a broken entry */ }
   }
   return { iceServers: servers };
+});
+
+// How a call went, without who or what: outcome, connection types, length. For fixing call problems.
+const CAND = /^(host|srflx|prflx|relay)(,(host|srflx|prflx|relay))*$|^$/;
+route('POST', '/calls/report', async ({ req, reply, body }) => {
+  const user = await currentUser(req, reply);
+  const b = shape<{ outcome: string; local: string; remote: string; pair: string; secs: number; ua: string }>(body, {
+    outcome: [str(1, 30, /^[a-z_]+$/), true], local: [str(0, 40, CAND), true], remote: [str(0, 40, CAND), true],
+    pair: [str(0, 20, /^[a-z,-]*$/), true], secs: [int(0, 86400), true], ua: [str(0, 20, /^[a-z0-9 ]*$/), true],
+  });
+  await enforce(`callreport:${user.id}`, 30, HOUR);
+  console.log('call report', JSON.stringify(b));
+  return ok;
 });
 
 route('POST', '/calls/signal', async ({ req, reply, body }) => {
