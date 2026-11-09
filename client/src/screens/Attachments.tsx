@@ -12,9 +12,10 @@ import { errorMessage } from '../lib/api';
 import { Avatar, Button, Spinner, confirmAction, toast, useAsync } from '../ui/components';
 import { PhoneField, type PhoneValue } from '../ui/PhoneField';
 import { getNav } from '../ui/nav';
-import { Camera, Close, Contacts, Lock, People, Plus, Trash, ArrowUp, Check } from '../ui/icons';
+import { Camera, Close, Contacts, Lock, People, Plus, Trash, ArrowUp, Check, Pencil } from '../ui/icons';
 import { invite } from './NewChat';
 import { ZoomImage } from '../ui/ZoomImage';
+import { editPhoto } from '../ui/PhotoEditor';
 import { ChatScreen } from './Chat';
 
 // ------------------------------------------------------------------ icons used only here
@@ -95,25 +96,32 @@ async function sendPickedFile(convId: string, file: File, viewOnce = false) {
 const HD_KEY = 'haven.photoHD';
 
 /** Look at the photo before sending: HD on or off, optional caption. */
-function PhotoSendSheet({ convId, file, close }: { convId: string; file: File; close: () => Promise<void> }) {
+function PhotoSendSheet({ convId, file: original, close }: { convId: string; file: File; close: () => Promise<void> }) {
   const [hd, setHd] = useState(() => { try { return localStorage.getItem(HD_KEY) === '1'; } catch { return false; } });
   const [once, setOnce] = useState(false);
   const [caption, setCaption] = useState('');
   const [busy, run] = useAsync();
-  const [url] = useState(() => URL.createObjectURL(file));
+  const [file, setFile] = useState<Blob>(original);
+  const [url, setUrl] = useState(() => URL.createObjectURL(original));
   useEffect(() => () => URL.revokeObjectURL(url), [url]);
+  const edit = async () => {
+    const out = await editPhoto(file);
+    if (!out) return;
+    setFile(out);
+    setUrl(URL.createObjectURL(out));
+  };
   const toggle = () => {
     const next = !hd;
     setHd(next);
     try { localStorage.setItem(HD_KEY, next ? '1' : '0'); } catch { /* fine */ }
   };
   const send = () => run(async () => {
+    const text = caption.trim().slice(0, 1000);
     if (once) {
       const p = await preparePhoto(file);
-      await sendMedia(convId, p.blob, { kind: 'image', w: p.w, h: p.h, viewOnce: true });
+      await sendMedia(convId, p.blob, { kind: 'image', w: p.w, h: p.h, viewOnce: true, ...(text ? { caption: text } : {}) });
     } else {
       const p = await preparePhoto(file, hd);
-      const text = caption.trim().slice(0, 1000);
       await sendMedia(convId, p.blob, { kind: 'image', w: p.w, h: p.h, thumb: p.thumb, ...(hd ? { hd: true } : {}), ...(text ? { caption: text } : {}) });
     }
     await close();
@@ -124,6 +132,7 @@ function PhotoSendSheet({ convId, file, close }: { convId: string; file: File; c
         <button class="nav-button" onClick={() => close()}>Cancel</button>
         <strong>Photo</strong>
         <span class="photo-send-toggles">
+          <button class="edit-toggle" onClick={edit} aria-label="Edit photo"><Pencil size={19} /></button>
           <button class={`once-toggle${once ? ' on' : ''}`} onClick={() => setOnce(!once)} aria-pressed={once} aria-label="View once"><Once size={20} /></button>
           {!once && <button class={`hd-toggle${hd ? ' on' : ''}`} onClick={toggle} aria-pressed={hd} aria-label="Send in HD">HD</button>}
         </span>
@@ -131,7 +140,7 @@ function PhotoSendSheet({ convId, file, close }: { convId: string; file: File; c
       <div class="photo-send-preview"><img src={url} alt="" draggable={false} /></div>
       <p class="photo-send-note">{once ? 'View once: opens one time, then disappears.' : hd ? 'HD: full resolution. Takes longer to send and uses more data.' : 'Standard quality. Tap HD for full resolution.'}</p>
       <div class="photo-send-bar">
-        <input class="field" type="text" disabled={once} placeholder={once ? 'No caption for view-once photos' : 'Add a caption'} maxLength={1000} value={caption} aria-label="Caption"
+        <input class="field" type="text" placeholder={once ? 'Caption (shown when opened)' : 'Add a caption'} maxLength={1000} value={caption} aria-label="Caption"
           onInput={(e) => setCaption((e.target as HTMLInputElement).value)} onKeyDown={(e) => e.key === 'Enter' && send()} />
         <button class="send-button ready" onClick={send} disabled={busy} aria-label="Send">{busy ? <Spinner size={18} /> : <ArrowUp size={20} />}</button>
       </div>

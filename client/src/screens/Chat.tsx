@@ -3,13 +3,15 @@ import type { JSX } from 'preact';
 import { useStore, type Conv, type Msg, type ReplyRef } from '../lib/store';
 import {
   avatarUrl, chatAvatarUrl, convTitle, displayName, loadMessages, otherMember, sendText, sendTyping, typingLabel, setOpenConv, retry, deleteMessage, deleteForEveryone, editMessage, acceptKeyChange,
-  react, isReadByAll, summarize, setPinned, timerLabel, setStatusBarColor, forwardBlock, forwardMessage, MAX_FORWARD,
+  react, isReadByAll, summarize, setPinned, timerLabel, setStatusBarColor, forwardBlock, forwardMessage, MAX_FORWARD, sendSticker,
 } from '../lib/engine';
 import { MediaView, LocationCard, ContactCard, PollCard, VoiceRecorder, openAttachSheet, Mic, Plus } from './Attachments';
 import { formatDay, formatTime, sameDay } from '../lib/format';
 import { Avatar, Button, confirmAction, toast } from '../ui/components';
 import { getNav, goBack, useNav } from '../ui/nav';
 import { Phone, ForwardIcon } from '../ui/icons';
+import { STICKERS, stickerUrl } from '../lib/stickers';
+import { StickerIcon } from '../ui/PhotoEditor';
 import { startCall, callsSupported } from '../lib/call';
 import { ArrowUp, ChevronLeft, Clock, Alert, Check, CheckDouble, Lock, Reply, Close, Copy, Trash, Pencil, Pin, Timer } from '../ui/icons';
 import { haptic } from '../lib/haptics';
@@ -455,10 +457,12 @@ function Bubble({ msg, conv, meId, first, last, onReply, onMenu, nameOf }: {
               <ContactCard msg={msg} meId={meId} />
             ) : msg.kind === 'poll' ? (
               <PollCard msg={msg} conv={conv} meId={meId} />
+            ) : msg.kind === 'sticker' && msg.sticker ? (
+              <img class="sticker-msg" src={stickerUrl(msg.sticker.id, msg.sticker.value) ?? ''} alt={`Sticker ${msg.sticker.value ?? ''}`} draggable={false} />
             ) : (
               <span class="bubble-text">{msg.mentions?.length ? withMentions(msg.text ?? '', mentionLabels(conv, msg.mentions), msg.mentions.includes(meId)) : linkify(msg.text ?? '')}</span>
             )}
-            {msg.kind === 'media' && !msg.deleted && msg.media?.caption && <span class="bubble-text caption">{linkify(msg.media.caption)}</span>}
+            {msg.kind === 'media' && !msg.deleted && msg.media?.caption && !msg.media.viewOnce && <span class="bubble-text caption">{linkify(msg.media.caption)}</span>}
             {/* Floated after the text: sits on the last line when there is room, otherwise on its own line. Never overlaps. */}
             <span class="bubble-meta">
               {msg.editedAt && !msg.deleted ? <span class="edited">edited</span> : null}
@@ -584,6 +588,39 @@ function ContextMenu({ state, meId, canReply, pinned, onClose, onReply }: {
             </button>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ stickers
+
+function openStickerSheet(convId: string) {
+  getNav().present((close) => <StickerSheet convId={convId} close={close} />, { variant: 'card' });
+}
+
+function StickerSheet({ convId, close }: { convId: string; close: () => Promise<void> }) {
+  const send = async (id: string, value?: string) => {
+    await close();
+    haptic();
+    sendSticker(convId, id, value).catch((err) => toast(err instanceof Error ? err.message : 'Could not send', 'error'));
+  };
+  return (
+    <div class="sheet-page">
+      <div class="sheet-header sheet-drag">
+        <span />
+        <strong>Haven stickers</strong>
+        <button class="nav-button bold" onClick={() => close()}>Done</button>
+      </div>
+      <div class="sticker-grid">
+        {STICKERS.map((s) => {
+          const value = s.live?.();
+          return (
+            <button key={s.id} class="sticker-cell" onClick={() => send(s.id, value)} aria-label={s.label}>
+              <img src={stickerUrl(s.id, value) ?? ''} alt="" draggable={false} />
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -809,6 +846,7 @@ function Composer({ conv, paused, replyTo, replyName, onCancelReply }: {
             maxLength={4000}
             disabled={paused}
             enterkeyhint={coarse ? 'enter' : 'send'}
+            style={{ paddingRight: '40px' }}
             onInput={(e) => {
               const el = e.target as HTMLTextAreaElement;
               const v = el.value;
@@ -824,6 +862,9 @@ function Composer({ conv, paused, replyTo, replyName, onCancelReply }: {
               if (e.key === 'Escape' && replyTo) onCancelReply();
             }}
           />
+          <button class="composer-sticker" aria-label="Stickers" disabled={paused} onPointerDown={(e) => e.preventDefault()} onClick={() => openStickerSheet(convId)}>
+            <StickerIcon size={21} />
+          </button>
         </div>
         {canSend || !('MediaRecorder' in window) ? (
           <button

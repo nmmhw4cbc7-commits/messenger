@@ -121,6 +121,7 @@ async function preview(): Promise<{ title: string; body: string; tag: string; co
     } else if (p.type === 'location') body = L('Location', 'Standort');
     else if (p.type === 'contact') body = `${L('Contact', 'Kontakt')} · ${p.name}`;
     else if (p.type === 'poll') body = `${L('Poll', 'Umfrage')} · ${p.question}`;
+    else if (p.type === 'sticker') body = p.value ? `Sticker · ${p.value}` : 'Sticker';
     else continue;
     return { title, body: body.length > 180 ? `${body.slice(0, 177)}…` : body, tag: m.conversationId, convId: m.conversationId };
   }
