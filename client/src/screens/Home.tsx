@@ -21,7 +21,7 @@ const ChatsPane = memo(() => <ChatsTab />);
 const SettingsPane = memo(() => <SettingsTab />);
 
 import { checkBackupOnStart } from './Backup';
-import { maybeAskPasskey, openPasskeySheet } from './Passkey';
+import { maybeAskPasskey, maybeAskUsername, openPasskeySheet } from './Passkey';
 import { maybeAskInstall } from './JoinInvite';
 
 const PLACE_KEY = 'haven.place';
@@ -90,7 +90,7 @@ export function Home() {
     };
     navigator.serviceWorker?.addEventListener('message', onMessage);
     // After an update: what's new. Otherwise (or later) the backup offer, never on top of another sheet.
-    const timer = setTimeout(() => { if (openLayers() === 0 && !maybeAskInstall() && !maybeAskPasskey() && !maybeShowWhatsNew()) checkBackupOnStart(); }, 1800);
+    const timer = setTimeout(() => { if (openLayers() === 0 && !maybeAskInstall() && !maybeAskPasskey() && !maybeAskUsername() && !maybeShowWhatsNew()) checkBackupOnStart(); }, 1800);
     return () => { clearTimeout(timer); navigator.serviceWorker?.removeEventListener('message', onMessage); };
   }, []);
   const unread = useStore((s) => Object.values(s.convs).reduce((n, c) => n + (c.hidden ? 0 : c.unread), 0));
