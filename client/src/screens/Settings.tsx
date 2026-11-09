@@ -3,7 +3,7 @@ import { useStore, type Profile, type Theme } from '../lib/store';
 import {
   avatarUrl, updateProfile, uploadAvatar, removeAvatar, setTheme, signOut, deleteAccount, addPasskey, passkeySupported, isPasskeyCancel,
   listBlocked, unblock, pushSupported, pushEnabled, enablePush, turnOffPush, displayName, setPushPreview,
-  syncLanguage,
+  syncLanguage, forwardingAllowed, setForwardingAllowed,
 } from '../lib/engine';
 import { editAvatar } from '../ui/AvatarEditor';
 import { openPhoto } from '../ui/PhotoViewer';
@@ -11,6 +11,7 @@ import { prettyPhone, handleOf } from '../lib/phone';
 import { errorMessage } from '../lib/api';
 import { Avatar, Button, Cell, Screen, Section, Segmented, Spinner, Toggle, NavButton, actionSheet, confirmAction, toast, useAsync, Empty } from '../ui/components';
 import { goBack, useNav } from '../ui/nav';
+import { ForwardIcon } from '../ui/icons';
 import { Bell, Block, Camera, Lock, Logout, Moon, Shield, Trash, Info, CheckDouble, Key, Clock, Vibrate, Cloud, Globe } from '../ui/icons';
 import { BackupScreen } from './Backup';
 import { hapticsOn, setHaptics } from '../lib/haptics';
@@ -22,6 +23,7 @@ export function SettingsTab() {
   const me = useStore((s) => s.me)!;
   const theme = useStore((s) => s.theme);
   const [haptics, setHapticsState] = useState(hapticsOn());
+  const [allowFwd, setAllowFwd] = useState(forwardingAllowed());
   const [lang, setLang] = useState<LangSetting>(langSetting());
   const chooseLang = async (v: LangSetting) => {
     setLang(v);
@@ -43,7 +45,7 @@ export function SettingsTab() {
         </button>
       </Section>
 
-      <Section header="Privacy & security" footer="With read receipts off, others don’t see when you read their messages. With last seen & online off, others don’t see when you were online, and you don’t see it for them either.">
+      <Section header="Privacy & security" footer="With read receipts off, others don’t see when you read their messages. With last seen & online off, others don’t see when you were online, and you don’t see it for them either. With forwarding off, others can’t forward the messages you send from now on.">
         <Cell icon={<Lock size={19} />} iconBg="ink" title="Passkey" value={me.passkeys ? 'On' : 'Not set up'} chevron onClick={() => nav.push(<PasskeyScreen />)} />
         <Cell
           icon={<CheckDouble size={19} />}
@@ -56,6 +58,12 @@ export function SettingsTab() {
           iconBg="ink"
           title="Last seen & online"
           right={<Toggle label="Last seen & online" checked={me.presence !== false} onChange={(v) => updateProfile({ presence: v }).catch((err) => toast(errorMessage(err), 'error'))} />}
+        />
+        <Cell
+          icon={<ForwardIcon size={19} />}
+          iconBg="ink"
+          title="Allow forwarding"
+          right={<Toggle label="Allow forwarding" checked={allowFwd} onChange={(v) => { setAllowFwd(v); setForwardingAllowed(v).catch(() => {}); }} />}
         />
         <Cell icon={<Block size={19} />} iconBg="ink" title="Blocked people" chevron onClick={() => nav.push(<BlockedPeople />)} />
         <Cell icon={<Key size={19} />} iconBg="ink" title="Linked devices" value={String(me.devices?.length || 1)} chevron onClick={() => nav.push(<DevicesScreen />)} />

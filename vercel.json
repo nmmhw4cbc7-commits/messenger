@@ -11,7 +11,7 @@
       "destination": "https://dufmhzcqixajtneiktin.supabase.co/functions/v1/api/:path*"
     },
     {
-      "source": "/((?!api/|assets/|icons/|sw\\.js|manifest\\.webmanifest).*)",
+      "source": "/((?!api/|assets/|icons/|vendor/|sw\\.js|manifest\\.webmanifest).*)",
       "destination": "/index.html"
     }
   ],
@@ -21,7 +21,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; font-src 'self'; connect-src 'self' https://dufmhzcqixajtneiktin.supabase.co wss://dufmhzcqixajtneiktin.supabase.co; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
+          "value": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; font-src 'self'; connect-src 'self' https://dufmhzcqixajtneiktin.supabase.co wss://dufmhzcqixajtneiktin.supabase.co https://huggingface.co https://*.huggingface.co https://*.hf.co; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
         },
         {
           "key": "Strict-Transport-Security",

@@ -85,6 +85,13 @@ export interface Msg {
   ttl?: number;
   /** People tagged with @ in this message. */
   mentions?: string[];
+  /** Forwarded: how many times along the way (1 = once). */
+  forwarded?: number;
+  /** The sender doesn't allow forwarding this message. */
+  noForward?: boolean;
+  /** Voice message as text (made on this device, only kept here). */
+  transcript?: string;
+  transcriptLang?: 'de' | 'en';
   createdAt: number;
   sortKey: number;
   status: 'pending' | 'sent' | 'failed' | 'received';

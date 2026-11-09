@@ -7,7 +7,7 @@ import * as idb from './idb';
 import { createIdentity, decryptMessage, encryptMessage, randomId, seal, unseal, toB64u, fromB64u, type Envelope, type Identity } from './crypto';
 import { getState, setState, type Activity, type Conv, type DeviceKey, type Me, type Member, type Msg, type Pin, type Profile, type ReplyRef, type SystemBody, type Theme } from './store';
 import type { Payload, MediaPayload } from './crypto';
-import { uploadMedia, storeLocalFile, forgetFile } from './media';
+import { uploadMedia, storeLocalFile, forgetFile, mediaUrl } from './media';
 
 let identity: Identity | null = null;
 const MAX_TEXT = 4000;
@@ -617,7 +617,7 @@ export async function sendText(convId: string, raw: string, reply?: ReplyRef, me
   const text = raw.replace(/\s+$/, '').replace(/^\s*\n/, '').slice(0, MAX_TEXT);
   if (!text.trim() || !getState().me) return;
   const now = Date.now();
-  const msg: Msg = { id: randomId(), convId, senderId: getState().me!.id, kind: 'text', text, createdAt: now, sortKey: now, status: 'pending', ...ttlOf(convId) };
+  const msg: Msg = { id: randomId(), convId, senderId: getState().me!.id, kind: 'text', text, createdAt: now, sortKey: now, status: 'pending', ...ttlOf(convId), ...noForwardFlag() };
   if (reply) msg.reply = { id: reply.id, senderId: reply.senderId, text: reply.text.slice(0, 200) };
   if (mentions.length) msg.mentions = [...new Set(mentions)].slice(0, 20);
   await addMessages([msg], false);
@@ -633,7 +633,69 @@ async function queue(msg: Msg) {
 
 function draft(convId: string, kind: Msg['kind']): Msg {
   const now = Date.now();
-  return { id: randomId(), convId, senderId: getState().me!.id, kind, createdAt: now, sortKey: now, status: 'pending', ...(kind === 'media' ? {} : ttlOf(convId)) };
+  return { id: randomId(), convId, senderId: getState().me!.id, kind, createdAt: now, sortKey: now, status: 'pending', ...(kind === 'media' ? {} : ttlOf(convId)), ...noForwardFlag() };
+}
+
+// ------------------------------------------------------------------ forwarding
+
+let allowForward = true;
+idb.get<boolean>('meta', 'allowForward').then((v) => { if (v === false) allowForward = false; }).catch(() => {});
+
+/** Settings: may others forward the messages I send? (applies to new messages) */
+export const forwardingAllowed = () => allowForward;
+export async function setForwardingAllowed(on: boolean) {
+  allowForward = on;
+  await idb.put('meta', on, 'allowForward');
+}
+const noForwardFlag = (): { noForward?: boolean } => (allowForward ? {} : { noForward: true });
+
+/** Why this message can't be forwarded ('' = it can). */
+export function forwardBlock(msg: Msg): string {
+  const me = getState().me;
+  if (!me || msg.deleted || msg.status === 'pending' || msg.status === 'failed') return 'unavailable';
+  if (!['text', 'media', 'location', 'contact'].includes(msg.kind)) return 'unavailable';
+  if (msg.media?.viewOnce) return 'View-once photos can’t be forwarded.';
+  if (msg.media?.vlog) return 'Vlog posts stay in the friend group.';
+  const mine = msg.senderId === me.id;
+  if (!mine && msg.noForward) return 'The sender doesn’t allow forwarding their messages.';
+  if (!mine && msg.ttl) return 'Disappearing messages can’t be forwarded.';
+  return '';
+}
+
+export const MAX_FORWARD = 5;
+
+/** Keep a voice message's transcript on this device. */
+export async function saveTranscript(msgId: string, text: string, lang: 'de' | 'en') {
+  const msg = await idb.get<Msg>('messages', msgId);
+  if (msg) await updateMessage({ ...msg, transcript: text || '…', transcriptLang: lang });
+}
+
+/** Send a copy of a message to up to 5 chats, marked "Forwarded". Media is re-encrypted for each chat. */
+export async function forwardMessage(msg: Msg, convIds: string[]) {
+  const why = forwardBlock(msg);
+  if (why) throw new Error(why === 'unavailable' ? 'This message can’t be forwarded.' : why);
+  const targets = [...new Set(convIds)].slice(0, MAX_FORWARD).filter((id) => getState().convs[id] && !getState().convs[id].left);
+  const count = Math.min(1000, (msg.forwarded ?? 0) + 1);
+  let blob: Blob | null = null;
+  if (msg.kind === 'media' && msg.media) {
+    const url = await mediaUrl(msg.id, msg.media);
+    blob = await (await fetch(url)).blob();
+  }
+  for (const convId of targets) {
+    const copy = draft(convId, msg.kind);
+    copy.forwarded = count;
+    if (msg.kind === 'text') copy.text = msg.text ?? '';
+    else if (msg.kind === 'location') copy.location = msg.location;
+    else if (msg.kind === 'contact') copy.contactCard = msg.contactCard;
+    else if (msg.kind === 'media' && msg.media && blob) {
+      const { kind, w, h, duration, thumb, wave, caption, hd } = msg.media;
+      copy.media = { kind, w, h, duration, thumb, wave, caption, hd, mime: blob.type || msg.media.mime, size: blob.size, path: '', key: '', iv: '' };
+      Object.assign(copy, ttlOf(convId));
+      await storeLocalFile(copy.id, blob);
+    }
+    await queue(copy);
+  }
+  return targets.length;
 }
 
 /** New messages in a chat with disappearing messages on carry the timer. Vlogs never disappear early. */
@@ -648,6 +710,7 @@ export async function sendMedia(convId: string, blob: Blob, meta: Omit<MediaPayl
   const msg = draft(convId, 'media');
   msg.media = { ...meta, mime: blob.type || 'application/octet-stream', size: blob.size, path: '', key: '', iv: '' };
   if (!meta.vlog) Object.assign(msg, ttlOf(convId));
+  if (meta.vlog || meta.viewOnce) delete msg.noForward;
   if (reply) msg.reply = reply;
   await storeLocalFile(msg.id, blob);
   await queue(msg);
@@ -754,8 +817,11 @@ function recipientsOf(conv: Conv) {
 }
 
 function payloadOf(msg: Msg): Payload {
-  const p = payloadBody(msg);
-  return msg.ttl ? ({ ...p, ttl: msg.ttl } as unknown as Payload) : p;
+  const p = payloadBody(msg) as Record<string, unknown>;
+  if (msg.ttl) p.ttl = msg.ttl;
+  if (msg.forwarded && msg.kind !== 'poll') p.fwd = msg.forwarded;
+  if (msg.noForward && msg.kind !== 'poll') p.nf = true;
+  return p as unknown as Payload;
 }
 
 function payloadBody(msg: Msg): Payload {
@@ -1000,8 +1066,11 @@ async function processBatch(batch: SyncMessage[]) {
     }
     if (result.ok) {
       const p = result.payload;
-      const ttl = (p as { ttl?: number }).ttl;
-      const base = { id: m.id, convId: m.conversationId, senderId: m.senderId, createdAt: m.createdAt, sortKey: m.createdAt, status: (fromMe ? 'sent' : 'received') as 'sent' | 'received', ...(ttl ? { ttl } : {}) };
+      const { ttl, fwd, nf } = p as { ttl?: number; fwd?: number; nf?: boolean };
+      const base = {
+        id: m.id, convId: m.conversationId, senderId: m.senderId, createdAt: m.createdAt, sortKey: m.createdAt, status: (fromMe ? 'sent' : 'received') as 'sent' | 'received',
+        ...(ttl ? { ttl } : {}), ...(fwd ? { forwarded: fwd } : {}), ...(nf ? { noForward: true } : {}),
+      };
       if (p.type === 'text') out.push({ ...base, kind: 'text', text: p.text, ...(p.reply ? { reply: p.reply } : {}), ...(p.mentions?.length ? { mentions: p.mentions } : {}) });
       else if (p.type === 'media') out.push({ ...base, kind: 'media', media: p.media, ...(p.reply ? { reply: p.reply } : {}) });
       else if (p.type === 'location') out.push({ ...base, kind: 'location', location: { lat: p.lat, lng: p.lng, acc: p.acc } });

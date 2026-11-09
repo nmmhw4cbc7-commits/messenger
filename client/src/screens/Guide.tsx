@@ -49,10 +49,11 @@ function Guide({ close }: { close: () => Promise<void> }) {
 // ------------------------------------------------------------------ what's new
 
 /** Bump with every update that has something to tell. */
-export const WHATS_NEW_VERSION = '2026-11-08d';
+export const WHATS_NEW_VERSION = '2026-11-09a';
 const SEEN_KEY = 'haven.whatsNewSeen';
 
 const WHATS_NEW: string[] = [
+  'Forward messages, see who voted in polls, and turn voice messages into text – right on your phone.',
   'Call people in one-to-one chats: tap the phone at the top. End-to-end encrypted and free.',
   'No more Telegram: you sign in with a passkey (Face ID). No phone number needed.',
   'Pick a @username in your profile, so friends can find you.',
