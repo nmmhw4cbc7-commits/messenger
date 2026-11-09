@@ -1,74 +1,95 @@
-# Haven security design
+# Haven security
 
 This document says what Haven protects, how, and where its limits are.
+
+## Reporting a vulnerability
+
+Please do **not** open a public issue. Use GitHub's private reporting instead: **Security → Report a vulnerability** in this repository. You will get an answer, and a fix before anything is made public.
 
 ## What the server can and cannot see
 
 | The server sees | The server never sees |
 | --- | --- |
-| Your phone number, name, "about" text and profile photo | Message content |
-| Who is in which conversation, and group names | Your private keys |
-| When an encrypted message was sent, its size and its recipients | Your chat history after delivery |
-| Your IP address while you are connected | Verification codes (with Twilio, they never reach the server) |
+| Your name, @username, "about" text and profile photo | Message content, photos, videos, voice messages, stickers |
+| Who is in which chat, group names and group photos | Call audio |
+| When an encrypted message was sent, its size and its recipients | Your private keys |
+| Who vlogs on which day in a friend group | Your chat history after delivery |
+| Your IP address while you are connected | Your face or fingerprint (passkeys stay on your phone) |
+| How a call went: outcome, connection type, length (no people, no content) | Voice-message transcripts and photo cut-outs (made on the phone) |
+
+Accounts made before passkeys may also have a phone number on file.
+
+## Accounts and sign-in
+
+- **Passkeys (WebAuthn).** An account is protected by a passkey stored in the phone's password manager (iCloud Keychain, Google Password Manager). Signing in needs Face ID, Touch ID or the device code. The server stores only the passkey's public key and checks a fresh signed challenge each time (5-minute, one-time challenges). There are no passwords and no SMS codes to steal or intercept.
+- **Sessions:** a random 256-bit token in an `HttpOnly`, `Secure`, `SameSite=Strict` cookie with the `__Host-` prefix. The database stores only its SHA-256 hash. Sessions slide for 60 days.
+- **Rate limits** in the database (shared by all server instances): sign-up and sign-in per IP, lookups, sending, uploads, call setup, invite previews, and an overall API budget per IP.
 
 ## Keys
 
-Each device creates two P-256 key pairs with WebCrypto when you sign in:
+Each device creates two P-256 key pairs with WebCrypto:
 
-- **enc** (ECDH), used to receive messages
-- **sig** (ECDSA), used to sign messages you send
+- **enc** (ECDH), to receive messages
+- **sig** (ECDSA), to sign what it sends
 
-The private keys are created with `extractable: false`, so the browser does not let any script read or export the key material. They are stored as `CryptoKey` objects in IndexedDB. Only the public keys are sent to the server.
+The private keys are created with `extractable: false`, so no script can read or export the key material. They are stored as `CryptoKey` objects in IndexedDB. Only the public keys go to the server.
 
-One account has one active device. Signing in on a new device creates new keys, ends every other session, and tells your contacts that your safety number changed.
+An account can have several devices: a new device is linked by scanning a QR code on a signed-in device, and the chat history can be handed over end-to-end encrypted. Signing in with a passkey on a new phone instead creates new keys and signs out the other devices; contacts then see that the safety number changed.
 
 ## Sending a message
 
 1. A random 256-bit content key encrypts the message with AES-256-GCM. The additional authenticated data is `haven/v1|conversation|sender|messageId|timestamp`, so the server cannot move a message to another chat, change who sent it, or replay it under another id.
-2. A fresh ephemeral ECDH key pair is generated for this message only. For each recipient, `ECDH(ephemeral, recipient.enc)` is fed through HKDF-SHA-256 (salt: the ephemeral public key; info: version, conversation, message, recipient and key version) to make a wrapping key. That key encrypts the content key with AES-256-GCM. The ephemeral private key is discarded.
+2. A fresh ephemeral ECDH key pair is made for this message only. For each recipient device, `ECDH(ephemeral, recipient.enc)` goes through HKDF-SHA-256 (salt: the ephemeral public key; info: version, conversation, message, recipient and key version) to make a wrapping key, which encrypts the content key with AES-256-GCM. The ephemeral private key is discarded.
 3. The sender signs the whole envelope (header, ephemeral key, ciphertext and every wrapped key) with ECDSA-SHA-256.
 
-The receiver checks the signature against the sender's pinned key before decrypting anything. The server only checks that the envelope has the right shape, and that it contains a wrapped key for exactly the current members on their current key versions. If not, the client refreshes and encrypts again.
+The receiver checks the signature against the sender's pinned key before decrypting anything. The server only checks the envelope's shape and that it has a wrapped key for exactly the current devices of the chat's members.
+
+**Attachments** (photos, videos, voice messages, custom stickers) are encrypted on the phone with their own random AES-256-GCM key before upload. That key travels only inside the end-to-end encrypted message.
 
 ## Trust on first use, and safety numbers
 
-The first public key Haven sees for a person is pinned on the device. If the server ever presents a different key, which happens legitimately when someone gets a new phone and would also happen if the server tried to impersonate them:
+The first public key Haven sees for a person is pinned on the device. If the server ever presents a different key – which happens legitimately when someone gets a new phone, and would also happen if the server tried to impersonate them – every chat with that person shows a "safety number changed" notice, and sending to a person you verified pauses until you accept the change.
 
-- every chat with that person shows a "safety number changed" notice
-- if you had verified that person, sending to them pauses until you accept the change
+A safety number is 60 digits, derived from both people's user ids and public keys with 2048 rounds of SHA-512 per side. If two people compare it in person and it matches, no one is in the middle.
 
-A safety number is 60 digits. It is derived from both people's user ids and public keys, with 2048 iterations of SHA-512 per side, and both people see the same number. If they compare it in person or on a call and it matches, no one is in the middle.
+## Calls
+
+Voice calls are WebRTC, directly between the two phones. The server only relays the call setup, and every setup message (offer, answer, network candidates, hang-up) is signed by the sending device and checked against its known key. That signature covers the DTLS fingerprint, so the audio (DTLS-SRTP) is end-to-end encrypted and the server cannot put itself in the middle. When a network blocks direct connections, the encrypted audio is relayed through Cloudflare's TURN service, which cannot decrypt it. TURN credentials are short-lived.
 
 ## Delivery and storage
 
-- The server stores each encrypted message with an explicit recipient list. A recipient fetches it with `/api/sync`, stores it on the device, and confirms with `/api/sync/ack`. The server then deletes that recipient's copy, and deletes the message once no recipient is left.
-- Anything still undelivered after `MESSAGE_RETENTION_DAYS` (default 30) is deleted.
-- SQLite runs with `secure_delete=ON`, so deleted rows are overwritten on disk.
-- On the device, decrypted messages live in IndexedDB, protected by the operating system's storage encryption. Signing out or deleting your account erases the whole local database, including the keys.
+- Each encrypted message is stored with an explicit list of recipient devices. A device fetches it, stores it, and confirms; the server then deletes that copy, and the message once no recipient is left. Anything undelivered after 30 days is deleted. Vlog media is kept encrypted for 7 days.
+- All data lives in a private Postgres schema that the Supabase Data API does not expose; only the server function can reach it.
+- On the phone, decrypted messages live in IndexedDB, protected by the operating system's storage encryption. Signing out or deleting the account erases the local database, including the keys.
+- **Disappearing messages** are deleted on every device after the chosen time. **View-once photos** are deleted after opening; their caption is shown only in the viewer.
 
-## Account security
+## Chat backup
 
-- **Sign-in:** an SMS code sent by Twilio Verify. In development mode codes are stored only as SHA-256 hashes, expire after 10 minutes, and allow at most 5 attempts.
-- **Rate limits:** codes per number (one per 30 seconds, 3 per 10 minutes, 8 per day) and per IP; verification attempts; PIN attempts; number lookups (60 per hour); sending; and an overall API budget.
-- **Registration lock:** an optional 4 to 12 digit PIN, hashed with scrypt (N=2^15). Signing in on a new device then needs the SMS code and the PIN. Five wrong PINs lock sign-in for 24 hours. The lock lapses after 7 days without account activity, so a forgotten PIN cannot lock you out forever.
-- **Sessions:** a random 256-bit token in an `HttpOnly`, `Secure`, `SameSite=Strict` cookie with the `__Host-` prefix. The database stores only its SHA-256 hash. Sessions slide for 60 days.
+Optional. The phone encrypts its chats with a random backup key before uploading. That key is stored on the server only wrapped with a key derived from the user's backup PIN (PBKDF2-SHA-256, 600,000 rounds, on the phone). To get the wrapped key back, the phone proves it knows the PIN with a second derived value, which the server checks with scrypt (N=2^15). Five wrong PINs lock the backup for 24 hours.
+
+## On-device AI
+
+Voice-message transcription (Whisper) and sticker cut-outs (ormbg) run in the browser with WebAssembly. The library is served from Haven's own domain; the models are downloaded once from Hugging Face and cached. Audio and photos are never uploaded for this.
+
+## Forwarding
+
+Forwarded copies are re-encrypted for the new chat and marked "Forwarded". People can turn forwarding of their messages off; this is enforced by the apps (view-once photos, vlog posts and other people's disappearing messages can never be forwarded). It cannot stop screenshots or a modified app.
 
 ## Web hardening
 
-- A strict Content Security Policy: `script-src 'self'`, no inline scripts or styles, `object-src 'none'`, `base-uri 'none'`, `frame-ancestors 'none'`.
-- HSTS, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy` and `Cross-Origin-Resource-Policy`, and a restrictive `Permissions-Policy`.
-- CSRF protection: SameSite=Strict cookies plus a strict `Origin` check on every state-changing request and on WebSocket upgrades.
-- Every request body is validated against a JSON schema that rejects unknown fields. All SQL uses prepared statements.
-- Display names and group names have control characters and bidirectional-override characters removed, so they cannot be used to spoof text.
-- Profile photos are re-encoded on the device, which removes EXIF data such as location. The server accepts only JPEG (checked by magic bytes, at most 300 KB) and serves them with `nosniff` and a sandbox CSP.
-- Push endpoints are restricted to the real browser push services, so the server cannot be used to make requests to internal addresses. Push payloads contain no sender and no content.
+- Content Security Policy: `script-src 'self' 'wasm-unsafe-eval'`, no inline scripts or styles, `object-src 'none'`, `base-uri 'none'`, `frame-ancestors 'none'`, and network access only to Haven's server and the model downloads.
+- HSTS, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cross-Origin-Opener-Policy: same-origin`, and a restrictive `Permissions-Policy`.
+- CSRF protection: SameSite=Strict cookies plus an `Origin` check on every state-changing request.
+- Every request body is validated against a schema that rejects unknown fields. All SQL is parameterised.
+- Names have control and bidirectional-override characters removed, so they cannot spoof text.
+- Profile photos are re-encoded on the phone (removing EXIF data such as location); the server accepts only JPEG and serves it with `nosniff` and a sandbox CSP.
+- Push endpoints are restricted to the real browser push services. Pushes for messages carry no sender and no content; the phone decrypts the preview itself.
 - The service worker never caches API responses.
-- Static files are served from an in-memory table with exact path matching, so path traversal is impossible.
-- There are few dependencies, and `npm audit` reports 0 known vulnerabilities at the time of writing.
 
 ## Known limits
 
-- **No forward secrecy for the recipient.** The ephemeral sender keys protect against a later leak of the sender's keys. But if a recipient's long-term `enc` private key were extracted from their device, messages to them that an attacker recorded could be decrypted. A double-ratchet protocol (as in Signal) would add this, at a large cost in complexity. Since the keys are non-extractable and messages are deleted after delivery, the practical exposure is small.
-- **Metadata** (who talks to whom, and when) is visible to the server operator, as described above.
-- **The web delivery model:** a compromised server could serve modified JavaScript. That is true of every web app. Running your own server, and verifying safety numbers, limits the risk.
-- **One device per account.** History does not move to a new device.
+- **No forward secrecy for the recipient.** Ephemeral sender keys protect against a later leak of the sender's keys, but if a recipient's long-term `enc` key were extracted from their device, recorded messages to them could be decrypted. A double ratchet (as in Signal) would add this. Keys are non-extractable and messages are deleted after delivery, which limits the practical exposure.
+- **Metadata** (who talks to whom, and when) is visible to the server operator.
+- **Calls reveal IP addresses** to the other person when the connection is direct, as with most calling apps.
+- **The web delivery model:** a compromised server could serve modified JavaScript. That is true of every web app. Verifying safety numbers limits the risk.
+- Enforcement of "no forwarding" and view-once is done by the apps, not by cryptography.
