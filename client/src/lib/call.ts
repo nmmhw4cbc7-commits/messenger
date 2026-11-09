@@ -10,7 +10,7 @@ import { api } from './api';
 import { addCallNote, callEvents, signCall, verifyCall } from './engine';
 import { getState, setState, type CallState } from './store';
 import { randomId } from './crypto';
-import { releaseMic, takeMic } from './mic';
+import { releaseAll } from './mic';
 
 type Signal = {
   type: 'offer' | 'answer' | 'ice' | 'hangup' | 'decline' | 'busy';
@@ -53,8 +53,43 @@ async function send(c: { convId: string; peerId: string }, sig: Omit<Signal, 'ts
   await api('POST', '/api/calls/signal', { convId: c.convId, to: c.peerId, payload, sig: await signCall(payload) });
 }
 
+/**
+ * A fresh microphone for each call. (The stream kept for voice messages may have
+ * been silenced by iOS while Haven was interrupted, e.g. by opening a notification,
+ * while still looking "on" – the other person would then hear nothing.)
+ * Any tone is stopped and its audio context closed first: on iPhone, audio that
+ * plays before the microphone starts can block the recording.
+ */
 async function microphone() {
-  return takeMic();
+  stopTone();
+  await closeAudio();
+  releaseAll();
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
+  watchTrack(stream);
+  return stream;
+}
+
+/** If iOS stops or mutes the microphone during the call, get it back and swap it in. */
+function watchTrack(stream: MediaStream) {
+  const track = stream.getAudioTracks()[0];
+  if (!track) return;
+  const revive = async () => {
+    const c = call();
+    if (!c || c.phase === 'ended' || !pc) return;
+    try {
+      const fresh = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
+      const nt = fresh.getAudioTracks()[0];
+      nt.enabled = !c.muted;
+      const sender = pc.getSenders().find((x) => x.track?.kind === 'audio' || x.track === track);
+      await sender?.replaceTrack(nt);
+      local?.getTracks().forEach((t) => t.stop());
+      local = fresh;
+      watchTrack(fresh);
+    } catch { /* keep the old one */ }
+  };
+  track.addEventListener('ended', revive);
+  // A muted track that doesn't come back within 2 s: replace it.
+  track.addEventListener('mute', () => setTimeout(() => { if (track.muted) revive(); }, 2000));
 }
 
 function newConnection(c: CallState, list: RTCIceServer[]) {
@@ -134,9 +169,9 @@ export async function startCall(convId: string) {
   if (call()) return;
   const c: CallState = { callId: randomId(), convId, peerId: peer.id, direction: 'out', phase: 'calling', muted: false, speaker: false };
   setState({ call: c });
-  ringback();
   try {
     local = await microphone();
+    ringback();
     pc = newConnection(c, await servers());
     for (const track of local.getTracks()) pc.addTrack(track, local);
     const offer = await pc.createOffer();
@@ -228,8 +263,9 @@ function finish(text: string, failed: boolean, note: 'auto' | 'missed' | 'none' 
     const outcome = c.startedAt ? (failed ? 'dropped' : 'ok') : failed ? 'failed' : c.phase === 'connecting' ? 'ended_connecting' : 'not_answered';
     report(old, outcome, c.startedAt ? Math.round((Date.now() - c.startedAt) / 1000) : 0).finally(() => old.close());
   } else old?.close();
-  if (local) releaseMic();
+  local?.getTracks().forEach((t) => t.stop());
   local = null;
+  closeAudio();
   if (remoteAudio) {
     remoteAudio.srcObject = null;
     remoteAudio.remove();
@@ -256,16 +292,21 @@ function finish(text: string, failed: boolean, note: 'auto' | 'missed' | 'none' 
 
 /** Tell the server how the call went (only connection types, no people or content), to fix call problems. */
 async function report(conn: RTCPeerConnection, outcome: string, secs: number) {
+  const local_muted = conn.getSenders().some((x) => x.track?.kind === 'audio' && (x.track.muted || x.track.readyState === 'ended'));
   try {
     const stats = await conn.getStats();
     const local = new Set<string>();
     const remote = new Set<string>();
     let pair = '';
+    let sent = 0;
+    let recv = 0;
     const byId = new Map<string, RTCStats & Record<string, unknown>>();
     stats.forEach((r) => byId.set(r.id, r as RTCStats & Record<string, unknown>));
     for (const r of byId.values()) {
       if (r.type === 'local-candidate' && typeof r.candidateType === 'string') local.add(r.candidateType);
       if (r.type === 'remote-candidate' && typeof r.candidateType === 'string') remote.add(r.candidateType);
+      if (r.type === 'outbound-rtp' && r.kind === 'audio') sent += Number(r.bytesSent ?? 0);
+      if (r.type === 'inbound-rtp' && r.kind === 'audio') recv += Number(r.bytesReceived ?? 0);
       if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.nominated) {
         const l = byId.get(String(r.localCandidateId))?.candidateType;
         const rm = byId.get(String(r.remoteCandidateId))?.candidateType;
@@ -274,6 +315,8 @@ async function report(conn: RTCPeerConnection, outcome: string, secs: number) {
     }
     const ua = /iPhone|iPad/.test(navigator.userAgent) ? 'ios' : /Android/.test(navigator.userAgent) ? 'android' : 'desktop';
     const standalone = matchMedia('(display-mode: standalone)').matches ? ' app' : '';
+    // Was audio actually flowing each way? (only for calls that connected)
+    if (secs >= 3) outcome = `${outcome}${sent < 3000 ? '_nosend' : ''}${recv < 3000 ? '_norecv' : ''}${local_muted ? '_micmuted' : ''}`.slice(0, 30);
     await api('POST', '/api/calls/report', { outcome, local: [...local].sort().join(','), remote: [...remote].sort().join(','), pair, secs, ua: ua + standalone });
   } catch {
     // Diagnostics only.
@@ -406,4 +449,11 @@ function stopTone() {
   tone?.stop();
   tone = null;
   navigator.vibrate?.(0);
+  closeAudio();
+}
+
+async function closeAudio() {
+  const ctx = audioCtx;
+  audioCtx = null;
+  if (ctx) await ctx.close().catch(() => {});
 }
