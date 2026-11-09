@@ -44,3 +44,9 @@ function stopMic() {
 // Never keep the microphone in the background.
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') stopMic(); });
 window.addEventListener('pagehide', () => { users = 0; stopMic(); });
+
+/** Switch the shared microphone off now (before a call takes the microphone). */
+export function releaseAll() {
+  users = 0;
+  stopMic();
+}
