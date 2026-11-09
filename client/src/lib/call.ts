@@ -89,6 +89,33 @@ function newConnection(c: CallState, list: RTCIceServer[]) {
   return conn;
 }
 
+/**
+ * Wait until the phone has found its network addresses (up to a few seconds), so they
+ * travel inside the offer/answer itself. A phone that opens Haven from the call
+ * notification would otherwise miss the addresses sent separately before it was open.
+ */
+function gathered(conn: RTCPeerConnection, ms = 3500): Promise<void> {
+  if (conn.iceGatheringState === 'complete') return Promise.resolve();
+  return new Promise((ok) => {
+    const done = () => { conn.removeEventListener('icegatheringstatechange', check); clearTimeout(t); ok(); };
+    const check = () => { if (conn.iceGatheringState === 'complete') done(); };
+    const t = setTimeout(done, ms);
+    conn.addEventListener('icegatheringstatechange', check);
+  });
+}
+
+/** Give up if the two phones can't reach each other. */
+function connectTimeout(c: CallState) {
+  clearTimeout(dropTimer);
+  dropTimer = window.setTimeout(() => {
+    const now = call();
+    if (now?.callId === c.callId && now.phase === 'connecting') {
+      send(now, { type: 'hangup', callId: now.callId, toDevice: peerDevice ?? undefined }).catch(() => {});
+      finish('Couldn’t connect', true);
+    }
+  }, 25_000);
+}
+
 async function flushIce() {
   if (!pc?.remoteDescription) return;
   const list = queuedIce;
@@ -114,6 +141,8 @@ export async function startCall(convId: string) {
     for (const track of local.getTracks()) pc.addTrack(track, local);
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
+    await gathered(pc);
+    if (!pc || call()?.callId !== c.callId) return;
     await send(c, { type: 'offer', callId: c.callId, sdp: pc.localDescription!.sdp });
     ringTimer = window.setTimeout(() => {
       if (call()?.phase === 'calling') {
@@ -141,6 +170,9 @@ export async function acceptCall() {
     await flushIce();
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
+    connectTimeout(c);
+    await gathered(pc, 2500);
+    if (!pc || call()?.callId !== c.callId) return;
     await send(c, { type: 'answer', callId: c.callId, sdp: pc.localDescription!.sdp, toDevice: peerDevice });
     pendingOffer = null;
   } catch (err) {
@@ -303,6 +335,7 @@ async function onSignal(raw: string) {
       stopTone();
       peerDevice = env.fromDevice;
       patch({ phase: 'connecting' });
+      connectTimeout(c);
       await pc.setRemoteDescription({ type: 'answer', sdp: sig.sdp ?? '' });
       await flushIce();
       break;
