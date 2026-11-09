@@ -62,7 +62,7 @@ export interface Msg {
   id: string;
   convId: string;
   senderId: string | null;
-  kind: 'text' | 'media' | 'location' | 'contact' | 'poll' | 'system' | 'notice' | 'undecryptable';
+  kind: 'text' | 'media' | 'location' | 'contact' | 'poll' | 'sticker' | 'system' | 'notice' | 'undecryptable';
   text?: string;
   system?: SystemBody;
   notice?: { type: 'key_changed'; userId: string; name: string };
@@ -73,6 +73,8 @@ export interface Msg {
   location?: { lat: number; lng: number; acc?: number };
   contactCard?: { name: string; phone: string };
   poll?: { question: string; options: string[]; multi: boolean };
+  /** Haven sticker (with its frozen value, e.g. the time it was sent). */
+  sticker?: { id: string; value?: string };
   /** Poll votes: userId -> chosen option indexes */
   votes?: Record<string, number[]>;
   /** View-once photo: has it been opened (by me, or for my own: by the recipient)? */

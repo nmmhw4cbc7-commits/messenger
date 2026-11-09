@@ -116,6 +116,7 @@ export type Payload =
   | { type: 'location'; lat: number; lng: number; acc?: number }
   | { type: 'contact'; name: string; phone: string }
   | { type: 'poll'; question: string; options: string[]; multi: boolean }
+  | { type: 'sticker'; id: string; value?: string }
   | { type: 'vote'; target: string; choices: number[] }
   | { type: 'opened'; target: string }
   | { type: 'edit'; target: string; text: string }
@@ -168,9 +169,9 @@ function cleanPayload(p: unknown): Payload | null {
   if (!out) return null;
   const o = p as Record<string, unknown>;
   const extra: Record<string, unknown> = {};
-  if (['text', 'media', 'location', 'contact', 'poll'].includes(out.type) && typeof o.ttl === 'number' && TIMER_CHOICES.includes(o.ttl) && o.ttl > 0) extra.ttl = o.ttl;
+  if (['text', 'media', 'location', 'contact', 'poll', 'sticker'].includes(out.type) && typeof o.ttl === 'number' && TIMER_CHOICES.includes(o.ttl) && o.ttl > 0) extra.ttl = o.ttl;
   // Forwarded (how often), and "the sender doesn't allow forwarding".
-  if (['text', 'media', 'location', 'contact'].includes(out.type)) {
+  if (['text', 'media', 'location', 'contact', 'sticker'].includes(out.type)) {
     if (Number.isInteger(o.fwd) && (o.fwd as number) >= 1 && (o.fwd as number) <= 1000) extra.fwd = o.fwd;
     if (o.nf === true) extra.nf = true;
   }
@@ -205,6 +206,9 @@ function cleanPayloadBody(p: unknown): Payload | null {
       return str(o.question, 300) && o.question && Array.isArray(o.options) && o.options.length >= 2 && o.options.length <= 12 && o.options.every((x) => str(x, 100) && x)
         ? { type: 'poll', question: o.question as string, options: o.options as string[], multi: o.multi === true }
         : null;
+    case 'sticker':
+      return typeof o.id === 'string' && /^[a-z0-9-]{1,24}$/.test(o.id) && (o.value === undefined || (str(o.value, 24) && /^[A-Za-z0-9 :./%+-]*$/.test(o.value as string)))
+        ? { type: 'sticker', id: o.id, ...(typeof o.value === 'string' && o.value ? { value: o.value } : {}) } : null;
     case 'vote':
       return typeof o.target === 'string' && ID.test(o.target) && Array.isArray(o.choices) && o.choices.length <= 12 && o.choices.every((c) => Number.isInteger(c) && c >= 0 && c < 12)
         ? { type: 'vote', target: o.target, choices: o.choices as number[] }

@@ -653,7 +653,7 @@ const noForwardFlag = (): { noForward?: boolean } => (allowForward ? {} : { noFo
 export function forwardBlock(msg: Msg): string {
   const me = getState().me;
   if (!me || msg.deleted || msg.status === 'pending' || msg.status === 'failed') return 'unavailable';
-  if (!['text', 'media', 'location', 'contact'].includes(msg.kind)) return 'unavailable';
+  if (!['text', 'media', 'location', 'contact', 'sticker'].includes(msg.kind)) return 'unavailable';
   if (msg.media?.viewOnce) return 'View-once photos can’t be forwarded.';
   if (msg.media?.vlog) return 'Vlog posts stay in the friend group.';
   const mine = msg.senderId === me.id;
@@ -686,6 +686,7 @@ export async function forwardMessage(msg: Msg, convIds: string[]) {
     if (msg.kind === 'text') copy.text = msg.text ?? '';
     else if (msg.kind === 'location') copy.location = msg.location;
     else if (msg.kind === 'contact') copy.contactCard = msg.contactCard;
+    else if (msg.kind === 'sticker') copy.sticker = msg.sticker;
     else if (msg.kind === 'media' && msg.media && blob) {
       const { kind, w, h, duration, thumb, wave, caption, hd } = msg.media;
       copy.media = { kind, w, h, duration, thumb, wave, caption, hd, mime: blob.type || msg.media.mime, size: blob.size, path: '', key: '', iv: '' };
@@ -727,6 +728,12 @@ export async function sendContact(convId: string, name: string, phone: string) {
   await queue(msg);
 }
 
+export async function sendSticker(convId: string, id: string, value?: string) {
+  const msg = draft(convId, 'sticker');
+  msg.sticker = { id, ...(value ? { value } : {}) };
+  await queue(msg);
+}
+
 export async function sendPoll(convId: string, question: string, options: string[], multi: boolean) {
   const msg = draft(convId, 'poll');
   msg.poll = { question: question.slice(0, 300), options: options.map((o) => o.slice(0, 100)).slice(0, 12), multi };
@@ -760,7 +767,7 @@ export async function markOpened(msg: Msg) {
   if (msg.opened) return;
   const direct = getState().convs[msg.convId]?.kind === 'direct';
   await forgetFile(msg.id, direct ? msg.media : undefined);
-  await updateMessage({ ...msg, opened: true, media: msg.media ? { ...msg.media, thumb: undefined } : undefined });
+  await updateMessage({ ...msg, opened: true, media: msg.media ? { ...msg.media, thumb: undefined, caption: undefined } : undefined });
   sendPayload(msg.convId, { type: 'opened', target: msg.id }).catch(() => {});
 }
 
@@ -833,6 +840,8 @@ function payloadBody(msg: Msg): Payload {
       return { type: 'contact', ...msg.contactCard! };
     case 'poll':
       return { type: 'poll', ...msg.poll! };
+    case 'sticker':
+      return { type: 'sticker', id: msg.sticker!.id, ...(msg.sticker!.value ? { value: msg.sticker!.value } : {}) };
     default:
       return { type: 'text', text: msg.text ?? '', ...(msg.reply ? { reply: msg.reply } : {}), ...(msg.mentions?.length ? { mentions: msg.mentions } : {}) };
   }
@@ -1075,6 +1084,7 @@ async function processBatch(batch: SyncMessage[]) {
       else if (p.type === 'location') out.push({ ...base, kind: 'location', location: { lat: p.lat, lng: p.lng, acc: p.acc } });
       else if (p.type === 'contact') out.push({ ...base, kind: 'contact', contactCard: { name: p.name, phone: p.phone } });
       else if (p.type === 'poll') out.push({ ...base, kind: 'poll', poll: { question: p.question, options: p.options, multi: p.multi }, votes: {} });
+      else if (p.type === 'sticker') out.push({ ...base, kind: 'sticker', sticker: { id: p.id, value: p.value } });
     } else {
       out.push({ id: m.id, convId: m.conversationId, senderId: m.senderId, kind: 'undecryptable', createdAt: m.createdAt, sortKey: m.createdAt, status: 'received' });
     }
@@ -1530,7 +1540,7 @@ export async function refreshMe() {
 }
 
 /** One-line summary of a message for chat lists and notifications. */
-export function summarize(m: Pick<Msg, 'kind' | 'text' | 'media' | 'contactCard' | 'poll'> & { deleted?: boolean }): string {
+export function summarize(m: Pick<Msg, 'kind' | 'text' | 'media' | 'contactCard' | 'poll'> & { deleted?: boolean; sticker?: Msg['sticker'] }): string {
   if (m.deleted) return 'This message was deleted';
   switch (m.kind) {
     case 'media':
@@ -1543,6 +1553,8 @@ export function summarize(m: Pick<Msg, 'kind' | 'text' | 'media' | 'contactCard'
       return `Contact · ${m.contactCard?.name ?? ''}`;
     case 'poll':
       return `Poll · ${m.poll?.question ?? ''}`;
+    case 'sticker':
+      return m.sticker?.value ? `Sticker · ${m.sticker.value}` : 'Sticker';
     default:
       return m.text ?? '';
   }
