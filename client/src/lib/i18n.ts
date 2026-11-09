@@ -286,6 +286,7 @@ const DE: Record<string, string> = {
   'Add a friend group': 'Freundesgruppe hinzufügen', 'You can be in up to 10 friend groups.': 'Du kannst in bis zu 10 Freundesgruppen sein.',
   'You can be in several friend groups. Switch or add one with the button next to the bell.': 'Du kannst in mehreren Freundesgruppen sein. Wechseln oder hinzufügen geht mit dem Button neben der Glocke.',
   // Passkeys & usernames
+  'Your account already has a passkey.': 'Dein Konto hat schon einen Passkey.',
   'Voice call': 'Sprachanruf',
   'Calling…': 'Ruft an…',
   'Haven voice call': 'Haven-Sprachanruf',

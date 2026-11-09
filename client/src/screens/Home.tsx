@@ -21,7 +21,7 @@ const ChatsPane = memo(() => <ChatsTab />);
 const SettingsPane = memo(() => <SettingsTab />);
 
 import { checkBackupOnStart } from './Backup';
-import { maybeAskPasskey } from './Passkey';
+import { maybeAskPasskey, openPasskeySheet } from './Passkey';
 import { maybeAskInstall } from './JoinInvite';
 
 const PLACE_KEY = 'haven.place';
@@ -64,6 +64,10 @@ export function Home() {
     const openScreen = (screen: string) => {
       if (screen === 'today') {
         setTab('today');
+        return;
+      }
+      if (screen === 'passkey') {
+        openPasskeySheet();
         return;
       }
       if (screen !== 'devices') return;
