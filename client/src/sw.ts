@@ -116,7 +116,7 @@ async function preview(): Promise<{ title: string; body: string; tag: string; co
       body = L(`Reacted ${p.emoji}`, `Hat mit ${p.emoji} reagiert`);
     } else if (p.type === 'media') {
       if (p.media.vlog) continue; // announced separately as "X just vlogged"
-      body = p.media.viewOnce ? L('Photo · view once', 'Foto · einmal ansehen') : p.media.kind === 'voice' ? L('Voice message', 'Sprachnachricht') : p.media.kind === 'video' ? 'Video' : L('Photo', 'Foto');
+      body = p.media.sticker ? 'Sticker' : p.media.viewOnce ? L('Photo · view once', 'Foto · einmal ansehen') : p.media.kind === 'voice' ? L('Voice message', 'Sprachnachricht') : p.media.kind === 'video' ? 'Video' : L('Photo', 'Foto');
       if (p.media.caption && !p.media.viewOnce) body += ` · ${p.media.caption}`;
     } else if (p.type === 'location') body = L('Location', 'Standort');
     else if (p.type === 'contact') body = `${L('Contact', 'Kontakt')} · ${p.name}`;

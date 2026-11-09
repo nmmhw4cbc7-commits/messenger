@@ -45,3 +45,4 @@ self.onmessage = async (e: MessageEvent<{ id: string; audio: Float32Array; langu
     postMessage({ id, type: 'error', message: err instanceof Error ? err.message : String(err) });
   }
 };
+export {};

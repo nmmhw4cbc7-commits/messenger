@@ -107,6 +107,8 @@ export interface MediaPayload {
   hd?: boolean;
   /** Part of the Vlog your Day of this day (YYYY-MM-DD). */
   vlog?: string;
+  /** A sticker (shown without a bubble). */
+  sticker?: boolean;
 }
 
 export type Payload =
@@ -157,6 +159,7 @@ function cleanMedia(m: unknown): MediaPayload | null {
   if (str(o.caption, 2000) && o.caption) out.caption = o.caption as string;
   if (o.hd === true && o.kind === 'image') out.hd = true;
   if (o.viewOnce === true && o.kind === 'image') out.viewOnce = true;
+  if (o.sticker === true && o.kind === 'image' && o.viewOnce !== true) out.sticker = true;
   if (typeof o.vlog === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(o.vlog) && o.kind !== 'voice') out.vlog = o.vlog;
   return out;
 }

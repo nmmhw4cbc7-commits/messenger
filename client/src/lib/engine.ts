@@ -688,8 +688,8 @@ export async function forwardMessage(msg: Msg, convIds: string[]) {
     else if (msg.kind === 'contact') copy.contactCard = msg.contactCard;
     else if (msg.kind === 'sticker') copy.sticker = msg.sticker;
     else if (msg.kind === 'media' && msg.media && blob) {
-      const { kind, w, h, duration, thumb, wave, caption, hd } = msg.media;
-      copy.media = { kind, w, h, duration, thumb, wave, caption, hd, mime: blob.type || msg.media.mime, size: blob.size, path: '', key: '', iv: '' };
+      const { kind, w, h, duration, thumb, wave, caption, hd, sticker } = msg.media;
+      copy.media = { kind, w, h, duration, thumb, wave, caption, hd, sticker, mime: blob.type || msg.media.mime, size: blob.size, path: '', key: '', iv: '' };
       Object.assign(copy, ttlOf(convId));
       await storeLocalFile(copy.id, blob);
     }
@@ -726,6 +726,19 @@ export async function sendContact(convId: string, name: string, phone: string) {
   const msg = draft(convId, 'contact');
   msg.contactCard = { name: name.slice(0, 80), phone };
   await queue(msg);
+}
+
+/** One of my own stickers (an image), sent like a photo but shown without a bubble. */
+export async function sendCustomSticker(convId: string, blob: Blob) {
+  let w = 512;
+  let h = 512;
+  try {
+    const bmp = await createImageBitmap(blob);
+    w = bmp.width;
+    h = bmp.height;
+    bmp.close?.();
+  } catch { /* keep the default */ }
+  await sendMedia(convId, blob, { kind: 'image', w, h, sticker: true });
 }
 
 export async function sendSticker(convId: string, id: string, value?: string) {
@@ -1545,6 +1558,7 @@ export function summarize(m: Pick<Msg, 'kind' | 'text' | 'media' | 'contactCard'
   switch (m.kind) {
     case 'media':
       if (m.media?.viewOnce) return 'Photo · view once';
+      if (m.media?.sticker) return 'Sticker';
       if (m.media?.kind === 'voice') return `Voice message${m.media.duration ? ` · ${formatDuration(m.media.duration)}` : ''}`;
       return (m.media?.kind === 'video' ? 'Video' : 'Photo') + (m.media?.caption ? ` · ${m.media.caption}` : '');
     case 'location':

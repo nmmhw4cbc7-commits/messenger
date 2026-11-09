@@ -3,15 +3,18 @@ import type { JSX } from 'preact';
 import { useStore, type Conv, type Msg, type ReplyRef } from '../lib/store';
 import {
   avatarUrl, chatAvatarUrl, convTitle, displayName, loadMessages, otherMember, sendText, sendTyping, typingLabel, setOpenConv, retry, deleteMessage, deleteForEveryone, editMessage, acceptKeyChange,
-  react, isReadByAll, summarize, setPinned, timerLabel, setStatusBarColor, forwardBlock, forwardMessage, MAX_FORWARD, sendSticker,
+  react, isReadByAll, summarize, setPinned, timerLabel, setStatusBarColor, forwardBlock, forwardMessage, MAX_FORWARD, sendSticker, sendCustomSticker,
 } from '../lib/engine';
-import { MediaView, LocationCard, ContactCard, PollCard, VoiceRecorder, openAttachSheet, Mic, Plus } from './Attachments';
+import { MediaView, LocationCard, ContactCard, PollCard, VoiceRecorder, openAttachSheet, Mic, Plus, pickFile } from './Attachments';
 import { formatDay, formatTime, sameDay } from '../lib/format';
 import { Avatar, Button, confirmAction, toast } from '../ui/components';
 import { getNav, goBack, useNav } from '../ui/nav';
 import { Phone, ForwardIcon } from '../ui/icons';
 import { STICKERS, stickerUrl } from '../lib/stickers';
 import { StickerIcon } from '../ui/PhotoEditor';
+import { makeSticker } from '../ui/StickerMaker';
+import { addMySticker, myStickerBlob, myStickerUrl, myStickers, removeMySticker } from '../lib/mystickers';
+import { mediaBlob } from '../lib/media';
 import { startCall, callsSupported } from '../lib/call';
 import { ArrowUp, ChevronLeft, Clock, Alert, Check, CheckDouble, Lock, Reply, Close, Copy, Trash, Pencil, Pin, Timer } from '../ui/icons';
 import { haptic } from '../lib/haptics';
@@ -432,7 +435,7 @@ function Bubble({ msg, conv, meId, first, last, onReply, onMenu, nameOf }: {
         <div class="bubble-col">
           <div
             ref={bubbleRef}
-            class={`bubble kind-${msg.kind}${msg.media ? ` media-${msg.media.viewOnce ? 'once' : msg.media.kind}` : ''}${msg.kind === 'undecryptable' ? ' undecryptable' : ''}${msg.status === 'failed' ? ' failed' : ''}`}
+            class={`bubble kind-${msg.kind}${msg.media ? ` media-${msg.media.viewOnce ? 'once' : msg.media.sticker ? 'sticker' : msg.media.kind}` : ''}${msg.kind === 'undecryptable' ? ' undecryptable' : ''}${msg.status === 'failed' ? ' failed' : ''}`}
             onClick={() => msg.status === 'failed' && openMenu()}
           >
             {showSender && <span class="bubble-sender">{senderName}</span>}
@@ -514,6 +517,13 @@ function ContextMenu({ state, meId, canReply, pinned, onClose, onReply }: {
 
   const actions: { label: string; icon: JSX.Element; danger?: boolean; run: () => void }[] = [];
   if (canReplyTo && canReply) actions.push({ label: 'Reply', icon: <Reply size={19} />, run: onReply });
+  if (msg.kind === 'media' && msg.media?.sticker && !msg.deleted) {
+    actions.push({
+      label: 'Add to my stickers',
+      icon: <Plus size={19} />,
+      run: () => mediaBlob(msg.id, msg.media!).then(addMySticker).then(() => toast('Added to My stickers'), () => toast('Could not save the sticker.', 'error')),
+    });
+  }
   const fwdBlock = forwardBlock(msg);
   if (fwdBlock !== 'unavailable') {
     actions.push({ label: 'Forward', icon: <ForwardIcon size={19} />, run: () => (fwdBlock ? toast(fwdBlock, 'error') : openForwardSheet(msg)) });
@@ -600,18 +610,61 @@ function openStickerSheet(convId: string) {
 }
 
 function StickerSheet({ convId, close }: { convId: string; close: () => Promise<void> }) {
+  const [mine, setMine] = useState<{ id: string; url: string }[] | null>(null);
+  const load = async () => {
+    const list = await myStickers();
+    const withUrls = await Promise.all(list.map(async (s) => ({ id: s.id, url: (await myStickerUrl(s.id)) ?? '' })));
+    setMine(withUrls.filter((s) => s.url));
+  };
+  useEffect(() => { load(); }, []);
   const send = async (id: string, value?: string) => {
     await close();
     haptic();
     sendSticker(convId, id, value).catch((err) => toast(err instanceof Error ? err.message : 'Could not send', 'error'));
   };
+  const sendMine = async (id: string) => {
+    const blob = await myStickerBlob(id);
+    if (!blob) return;
+    await close();
+    haptic();
+    sendCustomSticker(convId, blob).catch((err) => toast(err instanceof Error ? err.message : 'Could not send', 'error'));
+  };
+  // The file picker must open inside the tap (iOS).
+  const create = () => {
+    pickFile('image/*').then(async (file) => {
+      if (!file) return;
+      const id = await makeSticker(file);
+      if (id) load();
+    });
+  };
+  const remove = async (id: string) => {
+    if (await confirmAction({ message: 'Delete this sticker from My stickers?', confirm: 'Delete', danger: true })) {
+      await removeMySticker(id);
+      load();
+    }
+  };
   return (
     <div class="sheet-page">
       <div class="sheet-header sheet-drag">
         <span />
-        <strong>Haven stickers</strong>
+        <strong>Stickers</strong>
         <button class="nav-button bold" onClick={() => close()}>Done</button>
       </div>
+      <div class="sheet-scroll">
+      <h2 class="list-heading">My stickers</h2>
+      <div class="sticker-grid">
+        <button class="sticker-cell add" onClick={create} aria-label="New sticker from a photo">
+          <Plus size={30} />
+          <span>From photo</span>
+        </button>
+        {(mine ?? []).map((s) => (
+          <button key={s.id} class="sticker-cell" onClick={() => sendMine(s.id)} onContextMenu={(e) => { e.preventDefault(); remove(s.id); }} aria-label="My sticker">
+            <img src={s.url} alt="" draggable={false} />
+          </button>
+        ))}
+      </div>
+      {mine && mine.length > 0 && <p class="fine-print">Press and hold one of your stickers to delete it.</p>}
+      <h2 class="list-heading">Haven</h2>
       <div class="sticker-grid">
         {STICKERS.map((s) => {
           const value = s.live?.();
@@ -621,6 +674,7 @@ function StickerSheet({ convId, close }: { convId: string; close: () => Promise<
             </button>
           );
         })}
+      </div>
       </div>
     </div>
   );

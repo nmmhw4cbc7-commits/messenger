@@ -456,7 +456,13 @@ export function MediaView({ msg, meId }: { msg: Msg; meId: string }) {
   const media = msg.media!;
   if (media.kind === 'voice') return <VoicePlayer msg={msg} />;
   if (media.viewOnce) return <ViewOnce msg={msg} mine={msg.senderId === meId} />;
+  if (media.sticker) return <CustomSticker msg={msg} />;
   return <Visual msg={msg} />;
+}
+
+function CustomSticker({ msg }: { msg: Msg }) {
+  const { url } = useMediaUrl(msg);
+  return url ? <img class="sticker-msg custom" src={url} alt="Sticker" draggable={false} /> : <span class="sticker-msg custom loading"><Spinner size={18} /></span>;
 }
 
 export function useMediaUrl(msg: Msg, enabled = true) {
