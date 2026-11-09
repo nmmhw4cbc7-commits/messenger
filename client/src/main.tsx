@@ -90,3 +90,11 @@ window.addEventListener('unhandledrejection', (e) => setTimeout(() => showStartu
 render(<App />, document.getElementById('app')!);
 startTranslation();
 boot().catch((err) => showStartupError(err));
+
+// When Haven goes to the background (or the phone locks), stop any playing voice
+// message or video, so nothing keeps the phone busy. A running call is left alone.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'hidden') return;
+  if (document.querySelector('.call-screen')) return;
+  document.querySelectorAll<HTMLMediaElement>('audio, video').forEach((m) => { if (!m.paused) m.pause(); });
+});

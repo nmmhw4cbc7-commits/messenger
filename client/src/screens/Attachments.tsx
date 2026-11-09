@@ -563,6 +563,8 @@ function Viewer({ msg, url, close }: { msg: Msg; url: string; close: () => Promi
 // ------------------------------------------------------------------ voice messages
 
 let playing: HTMLAudioElement | null = null;
+// Voice messages stop when Haven goes to the background.
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') playing?.pause(); });
 
 function VoicePlayer({ msg }: { msg: Msg }) {
   const media = msg.media!;
