@@ -49,10 +49,11 @@ function Guide({ close }: { close: () => Promise<void> }) {
 // ------------------------------------------------------------------ what's new
 
 /** Bump with every update that has something to tell. */
-export const WHATS_NEW_VERSION = '2026-11-09b';
+export const WHATS_NEW_VERSION = '2026-11-09c';
 const SEEN_KEY = 'haven.whatsNewSeen';
 
 const WHATS_NEW: string[] = [
+  'Make your own stickers: tap the sticker icon, then “From photo” – Haven cuts out the person or object automatically.',
   'New: Haven stickers – tap the sticker icon in the message field.',
   'Edit photos before sending – draw, write and add Haven stickers. View-once photos can have a caption too.',
   'Forward messages, see who voted in polls, and turn voice messages into text – right on your phone.',
