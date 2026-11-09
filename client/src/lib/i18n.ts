@@ -286,6 +286,8 @@ const DE: Record<string, string> = {
   'Add a friend group': 'Freundesgruppe hinzufügen', 'You can be in up to 10 friend groups.': 'Du kannst in bis zu 10 Freundesgruppen sein.',
   'You can be in several friend groups. Switch or add one with the button next to the bell.': 'Du kannst in mehreren Freundesgruppen sein. Wechseln oder hinzufügen geht mit dem Button neben der Glocke.',
   // Passkeys & usernames
+  'Username saved': 'Benutzername gespeichert',
+  'Pick a @username, so friends can find you without your phone number.': 'Wähle einen @benutzernamen, damit Freunde dich ohne deine Handynummer finden.',
   'My stickers': 'Meine Sticker',
   'From photo': 'Aus Foto',
   'New sticker from a photo': 'Neuer Sticker aus einem Foto',
