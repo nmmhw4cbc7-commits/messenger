@@ -7,7 +7,7 @@ import * as idb from './idb';
 import { createIdentity, decryptMessage, encryptMessage, randomId, seal, unseal, toB64u, fromB64u, type Envelope, type Identity } from './crypto';
 import { getState, setState, type Activity, type Conv, type DeviceKey, type Me, type Member, type Msg, type Pin, type Profile, type ReplyRef, type SystemBody, type Theme } from './store';
 import type { Payload, MediaPayload } from './crypto';
-import { uploadMedia, storeLocalFile, forgetFile, mediaUrl } from './media';
+import { uploadMedia, storeLocalFile, forgetFile, mediaBlob } from './media';
 
 let identity: Identity | null = null;
 const MAX_TEXT = 4000;
@@ -678,8 +678,7 @@ export async function forwardMessage(msg: Msg, convIds: string[]) {
   const count = Math.min(1000, (msg.forwarded ?? 0) + 1);
   let blob: Blob | null = null;
   if (msg.kind === 'media' && msg.media) {
-    const url = await mediaUrl(msg.id, msg.media);
-    blob = await (await fetch(url)).blob();
+    blob = await mediaBlob(msg.id, msg.media);
   }
   for (const convId of targets) {
     const copy = draft(convId, msg.kind);

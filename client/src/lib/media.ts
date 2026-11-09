@@ -45,21 +45,27 @@ const objectUrls = new Map<string, string>();
 const inflight = new Map<string, Promise<string>>();
 
 /** Object URL for an attachment: from memory, from this device, or downloaded and decrypted. */
+/** The decrypted file itself: from this device, or downloaded and decrypted. */
+export async function mediaBlob(id: string, ref: MediaRef): Promise<Blob> {
+  let blob = await idb.get<Blob>('files', id);
+  if (!blob) {
+    if (!ref.path) throw new Error('Not uploaded yet');
+    const { url } = await api<{ url: string }>('POST', '/api/attachments/url', { path: ref.path });
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(res.status === 400 || res.status === 404 ? 'This file is no longer available.' : 'Could not load this file.');
+    blob = await decryptBytes(await res.arrayBuffer(), ref);
+    if (!ref.viewOnce) await idb.put('files', blob, id).catch(() => {});
+  }
+  return blob;
+}
+
 export function mediaUrl(id: string, ref: MediaRef): Promise<string> {
   const cached = objectUrls.get(id);
   if (cached) return Promise.resolve(cached);
   let p = inflight.get(id);
   if (!p) {
     p = (async () => {
-      let blob = await idb.get<Blob>('files', id);
-      if (!blob) {
-        if (!ref.path) throw new Error('Not uploaded yet');
-        const { url } = await api<{ url: string }>('POST', '/api/attachments/url', { path: ref.path });
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(res.status === 400 || res.status === 404 ? 'This file is no longer available.' : 'Could not load this file.');
-        blob = await decryptBytes(await res.arrayBuffer(), ref);
-        if (!ref.viewOnce) await idb.put('files', blob, id).catch(() => {});
-      }
+      const blob = await mediaBlob(id, ref);
       const url = URL.createObjectURL(blob);
       objectUrls.set(id, url);
       return url;
