@@ -190,8 +190,12 @@ function finish(text: string, failed: boolean, note: 'auto' | 'missed' | 'none' 
   clearTimeout(ringTimer);
   clearTimeout(dropTimer);
   stopTone();
-  pc?.close();
+  const old = pc;
   pc = null;
+  if (old && c) {
+    const outcome = c.startedAt ? (failed ? 'dropped' : 'ok') : failed ? 'failed' : c.phase === 'connecting' ? 'ended_connecting' : 'not_answered';
+    report(old, outcome, c.startedAt ? Math.round((Date.now() - c.startedAt) / 1000) : 0).finally(() => old.close());
+  } else old?.close();
   if (local) releaseMic();
   local = null;
   if (remoteAudio) {
@@ -216,6 +220,32 @@ function finish(text: string, failed: boolean, note: 'auto' | 'missed' | 'none' 
   }
   patch({ phase: 'ended', endText: text });
   window.setTimeout(() => { if (getState().call?.callId === c.callId) setState({ call: null }); }, 1400);
+}
+
+/** Tell the server how the call went (only connection types, no people or content), to fix call problems. */
+async function report(conn: RTCPeerConnection, outcome: string, secs: number) {
+  try {
+    const stats = await conn.getStats();
+    const local = new Set<string>();
+    const remote = new Set<string>();
+    let pair = '';
+    const byId = new Map<string, RTCStats & Record<string, unknown>>();
+    stats.forEach((r) => byId.set(r.id, r as RTCStats & Record<string, unknown>));
+    for (const r of byId.values()) {
+      if (r.type === 'local-candidate' && typeof r.candidateType === 'string') local.add(r.candidateType);
+      if (r.type === 'remote-candidate' && typeof r.candidateType === 'string') remote.add(r.candidateType);
+      if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.nominated) {
+        const l = byId.get(String(r.localCandidateId))?.candidateType;
+        const rm = byId.get(String(r.remoteCandidateId))?.candidateType;
+        pair = `${l}-${rm}`;
+      }
+    }
+    const ua = /iPhone|iPad/.test(navigator.userAgent) ? 'ios' : /Android/.test(navigator.userAgent) ? 'android' : 'desktop';
+    const standalone = matchMedia('(display-mode: standalone)').matches ? ' app' : '';
+    await api('POST', '/api/calls/report', { outcome, local: [...local].sort().join(','), remote: [...remote].sort().join(','), pair, secs, ua: ua + standalone });
+  } catch {
+    // Diagnostics only.
+  }
 }
 
 // ------------------------------------------------------------------ incoming setup messages
