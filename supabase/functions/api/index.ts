@@ -358,6 +358,13 @@ async function sendPendingAnnouncement() {
     return;
   }
   if (typeof a.title !== 'string' || typeof a.body !== 'string') return;
+  // {to: [userId, ...]}: only these people (e.g. a test notification).
+  const to = (a as { to?: unknown }).to;
+  if (Array.isArray(to) && to.every((x) => typeof x === 'string' && ID_RE.test(x))) {
+    const subs = await sql`select endpoint, p256dh, auth from haven.push_subscriptions where user_id = any(${to as string[]})`;
+    await pushTo(subs, JSON.stringify({ t: 'announce', title: a.title.slice(0, 80), body: a.body.slice(0, 200), open: typeof a.open === 'string' ? a.open.slice(0, 40) : undefined }));
+    return;
+  }
   const payload = JSON.stringify({ t: 'announce', title: a.title.slice(0, 80), body: a.body.slice(0, 200), open: typeof a.open === 'string' ? a.open.slice(0, 40) : undefined });
   const subs = await sql`select endpoint, p256dh, auth from haven.push_subscriptions`;
   await pushTo(subs, payload);
