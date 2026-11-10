@@ -5,7 +5,7 @@ import {
   avatarUrl, chatAvatarUrl, convTitle, displayName, loadMessages, otherMember, sendText, sendTyping, typingLabel, setOpenConv, retry, deleteMessage, deleteForEveryone, editMessage, acceptKeyChange,
   react, isReadByAll, summarize, setPinned, timerLabel, setStatusBarColor, forwardBlock, forwardMessage, MAX_FORWARD, sendSticker, sendCustomSticker,
 } from '../lib/engine';
-import { MediaView, LocationCard, ContactCard, PollCard, VoiceRecorder, openAttachSheet, Mic, Plus, pickFile } from './Attachments';
+import { MediaView, LocationCard, ContactCard, PollCard, VoiceRecorder, openAttachSheet, Mic, Plus, pickFile, canSave, prepareSave, saveToPhotos } from './Attachments';
 import { formatDay, formatTime, sameDay } from '../lib/format';
 import { Avatar, Button, confirmAction, toast } from '../ui/components';
 import { getNav, goBack, useNav } from '../ui/nav';
@@ -496,6 +496,7 @@ function ContextMenu({ state, meId, canReply, pinned, onClose, onReply }: {
   onReply: () => void;
 }) {
   const { msg, rect, mine } = state;
+  useEffect(() => { if (canSave(msg)) prepareSave(msg).catch(() => {}); }, [msg.id]);
   const canReplyTo = msg.kind !== 'undecryptable' && msg.status !== 'pending' && !msg.deleted;
   const sent = mine && !msg.deleted && msg.status !== 'pending' && msg.status !== 'failed';
   const [closing, setClosing] = useState(false);
@@ -517,6 +518,9 @@ function ContextMenu({ state, meId, canReply, pinned, onClose, onReply }: {
 
   const actions: { label: string; icon: JSX.Element; danger?: boolean; run: () => void }[] = [];
   if (canReplyTo && canReply) actions.push({ label: 'Reply', icon: <Reply size={19} />, run: onReply });
+  if (canSave(msg)) {
+    actions.push({ label: 'Save to Photos', icon: <SaveGlyph />, run: () => saveToPhotos(msg) });
+  }
   if (msg.kind === 'media' && msg.media?.sticker && !msg.deleted) {
     actions.push({
       label: 'Add to my stickers',
@@ -940,3 +944,9 @@ function Composer({ conv, paused, replyTo, replyName, onCancelReply }: {
     </div>
   );
 }
+
+const SaveGlyph = () => (
+  <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14" />
+  </svg>
+);

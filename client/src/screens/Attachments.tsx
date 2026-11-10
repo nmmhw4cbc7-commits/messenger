@@ -6,7 +6,7 @@ import { t, currentLang } from '../lib/i18n';
 import {
   avatarUrl, displayName, formatDuration, lookupPhone, markOpened, openDirect, sendContact, sendLocation, sendMedia, sendPoll, vote, saveTranscript,
 } from '../lib/engine';
-import { mediaUrl, prepareVideo, preparePhoto, startRecording, type Recording } from '../lib/media';
+import { mediaUrl, mediaBlob, prepareVideo, preparePhoto, startRecording, type Recording } from '../lib/media';
 import { guessCountry, prettyPhone, toE164 } from '../lib/phone';
 import { errorMessage } from '../lib/api';
 import { Avatar, Button, Spinner, confirmAction, toast, useAsync } from '../ui/components';
@@ -515,6 +515,84 @@ function ViewOnce({ msg, mine }: { msg: Msg; mine: boolean }) {
   );
 }
 
+// ------------------------------------------------------------------ save to photos
+
+const prepared = new Map<string, Promise<File>>();
+
+/** Can this photo/video be saved? (Never view-once photos.) */
+export const canSave = (msg: Msg) => msg.kind === 'media' && !!msg.media && !msg.deleted && !msg.media.viewOnce && msg.media.kind !== 'voice';
+
+/**
+ * Start reading the file early (when a menu opens), so the share sheet can open
+ * right in the tap – iOS only allows that during the tap itself.
+ */
+export function prepareSave(msg: Msg): Promise<File> {
+  let p = prepared.get(msg.id);
+  if (!p) {
+    p = mediaBlob(msg.id, msg.media!).then((b) => {
+      const type = b.type || msg.media!.mime;
+      const ext = type.includes('png') ? 'png' : type.includes('webp') ? 'webp' : type.startsWith('video/') ? (type.includes('quicktime') ? 'mov' : type.includes('webm') ? 'webm' : 'mp4') : 'jpg';
+      const d = new Date(msg.createdAt);
+      const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
+      return new File([b], `Haven-${stamp}.${ext}`, { type });
+    });
+    p.catch(() => prepared.delete(msg.id));
+    prepared.set(msg.id, p);
+    setTimeout(() => prepared.delete(msg.id), 120_000);
+  }
+  return p;
+}
+
+/** iPhone: share sheet with "Save Image"/"Save Video". Elsewhere: download. */
+export async function saveToPhotos(msg: Msg) {
+  if (!canSave(msg)) return;
+  try {
+    const file = await prepareSave(msg);
+    const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
+    if (nav.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file] });
+      } catch (err) {
+        if ((err as Error).name !== 'AbortError') throw err;
+      }
+      return;
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(file);
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 20_000);
+    toast(t('Saved'));
+  } catch {
+    toast(t('Could not save this file.'), 'error');
+  }
+}
+
+/** Long press (touch) or right click: calls onLong, and swallows the click that follows. */
+export function useLongPress(onLong: () => void, onStart?: () => void) {
+  const timer = useRef<number | undefined>();
+  const fired = useRef(false);
+  const start = useRef<[number, number]>([0, 0]);
+  return {
+    onPointerDown: (e: PointerEvent) => {
+      fired.current = false;
+      start.current = [e.clientX, e.clientY];
+      onStart?.();
+      clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => { fired.current = true; navigator.vibrate?.(8); onLong(); }, 480);
+    },
+    onPointerMove: (e: PointerEvent) => {
+      if (Math.hypot(e.clientX - start.current[0], e.clientY - start.current[1]) > 10) clearTimeout(timer.current);
+    },
+    onPointerUp: () => clearTimeout(timer.current),
+    onPointerCancel: () => clearTimeout(timer.current),
+    onContextMenu: (e: Event) => { e.preventDefault(); clearTimeout(timer.current); if (!fired.current) { fired.current = true; onStart?.(); onLong(); } },
+    onClickCapture: (e: Event) => { if (fired.current) { e.preventDefault(); e.stopPropagation(); fired.current = false; } },
+  };
+}
+
 /** Full-screen photo/video viewer. Swipe down or tap × to close. */
 export function openViewer(msg: Msg, url: string, onClosed?: () => void) {
   getNav().present((close) => <Viewer msg={msg} url={url} close={close} />, { variant: 'full', onClose: onClosed });
@@ -522,6 +600,7 @@ export function openViewer(msg: Msg, url: string, onClosed?: () => void) {
 
 function Viewer({ msg, url, close }: { msg: Msg; url: string; close: () => Promise<void> }) {
   const media = msg.media!;
+  useEffect(() => { if (canSave(msg)) prepareSave(msg).catch(() => {}); }, [msg.id]);
   const ref = useRef<HTMLDivElement>(null);
   const zoomed = useRef(false);
   const onPointerDown = (e: PointerEvent) => {
@@ -549,6 +628,7 @@ function Viewer({ msg, url, close }: { msg: Msg; url: string; close: () => Promi
   return (
     <div class="viewer" ref={ref} onPointerDown={onPointerDown}>
       <button class="viewer-close" onClick={() => close()} aria-label="Close"><Close size={22} /></button>
+      {canSave(msg) && <button class="viewer-save" onClick={() => saveToPhotos(msg)} aria-label="Save to Photos"><SaveIcon /></button>}
       {media.viewOnce && <div class="viewer-note"><Once size={16} /> Opens once. It disappears when you close it.</div>}
       {media.kind === 'video' ? (
         <video src={url} controls autoPlay playsInline />
@@ -712,3 +792,9 @@ export function VoiceRecorder({ convId, onDone }: { convId: string; onDone: () =
 
 export { Plus, Lock, People };
 export type { Profile };
+
+const SaveIcon = () => (
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14" />
+  </svg>
+);

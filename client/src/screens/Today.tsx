@@ -18,7 +18,7 @@ import { getNav, useNav } from '../ui/nav';
 import { Bell, Camera, ChevronRight, ChevronDown, PersonAdd, Chats as ChatIcon, Close, Share, Copy, Check, Plus } from '../ui/icons';
 import { PeoplePicker } from './NewChat';
 import { ChatScreen } from './Chat';
-import { openViewer, pickFile, useMediaUrl } from './Attachments';
+import { openViewer, pickFile, useMediaUrl, useLongPress, saveToPhotos, prepareSave, canSave } from './Attachments';
 import { markWhatsNewSeen, openGuide } from './Guide';
 import { Faces, membersText } from './JoinInvite';
 import { clearJoin, codeFrom, inviteUrl, pendingJoin, previewInvite, type InvitePreview } from '../lib/invite';
@@ -403,6 +403,10 @@ function TimelineItem({ msg }: { msg: Msg }) {
   const mine = useStore((s) => s.me?.id === msg.senderId);
   const { url, error } = useMediaUrl(msg);
   const ratio = media.w && media.h ? Math.min(Math.max(media.h / media.w, 0.56), 1.25) : 1;
+  const press = useLongPress(
+    () => actionSheet([{ label: media.kind === 'video' ? 'Save video' : 'Save photo', run: () => saveToPhotos(msg) }]),
+    () => { if (canSave(msg)) prepareSave(msg).catch(() => {}); },
+  );
   return (
     <li class="vlog-item">
       <span class="vlog-item-time">{timeOf(msg.createdAt)}{msg.status === 'pending' ? ' · posting…' : msg.status === 'failed' ? ' · not sent' : ''}</span>
@@ -410,6 +414,7 @@ function TimelineItem({ msg }: { msg: Msg }) {
         class="vlog-item-media"
         style={{ aspectRatio: `${1 / ratio}`, ...(media.thumb ? { backgroundImage: `url(${media.thumb})` } : {}) }}
         onClick={() => url && openViewer(msg, url)}
+        {...press}
         aria-label={media.kind === 'video' ? 'Play video' : 'Open photo'}
       >
         {url && media.kind === 'image' && <img src={url} alt="" draggable={false} decoding="async" />}
