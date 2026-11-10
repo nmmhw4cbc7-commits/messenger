@@ -1331,7 +1331,21 @@ async function subscribeDevice() {
   const reg = await navigator.serviceWorker.ready;
   const { publicKey } = await api<{ publicKey: string }>('GET', '/api/push/key');
   const key = Uint8Array.from(atob(publicKey.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
-  const sub = (await reg.pushManager.getSubscription()) ?? (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }));
+  // A subscription can die at Apple's/Google's push service while the phone still
+  // holds it (the server then drops it after the first failed push). Renew it every
+  // few days so notifications keep arriving without anyone noticing.
+  let sub = await reg.pushManager.getSubscription();
+  let renewed = 0;
+  try { renewed = Number(localStorage.getItem('haven.pushRenewed') || 0); } catch { /* fine */ }
+  if (sub && Date.now() - renewed > 3 * 24 * 3600_000) {
+    await api('DELETE', '/api/push/subscribe', { endpoint: sub.endpoint }).catch(() => {});
+    await sub.unsubscribe().catch(() => {});
+    sub = null;
+  }
+  if (!sub) {
+    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    try { localStorage.setItem('haven.pushRenewed', String(Date.now())); } catch { /* fine */ }
+  }
   const json = sub.toJSON();
   await api('POST', '/api/push/subscribe', { endpoint: json.endpoint, keys: json.keys });
 }
