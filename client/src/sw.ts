@@ -80,7 +80,8 @@ interface SyncMessage {
   body: unknown;
 }
 
-async function preview(): Promise<{ title: string; body: string; tag: string; convId?: string; open?: string } | null> {
+/** The newest message worth showing; 'none' when the new messages are all silent (votes, read-by, …); null when it could not be checked. */
+async function preview(): Promise<{ title: string; body: string; tag: string; convId?: string; open?: string } | 'none' | null> {
   const [identity, me, cursor, aliases] = await Promise.all([
     idbGet<Identity>('meta', 'identity'),
     idbGet<Me>('meta', 'me'),
@@ -125,7 +126,7 @@ async function preview(): Promise<{ title: string; body: string; tag: string; co
     else continue;
     return { title, body: body.length > 180 ? `${body.slice(0, 177)}…` : body, tag: m.conversationId, convId: m.conversationId };
   }
-  return null;
+  return 'none';
 }
 
 self.addEventListener('push', (event) => {
@@ -146,14 +147,23 @@ self.addEventListener('push', (event) => {
     }
     const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     if (windows.some((w) => w.visibilityState === 'visible')) return;
-    let note: Awaited<ReturnType<typeof preview>> = null;
+    let note: Exclude<Awaited<ReturnType<typeof preview>>, 'none'> = null;
     const showPreview = (await idbGet<boolean>('meta', 'pushPreview')) ?? true;
     if (showPreview) {
+      let got: Awaited<ReturnType<typeof preview>> = null;
       try {
-        note = await preview();
+        got = await preview();
       } catch {
-        note = null;
+        got = null;
       }
+      if (got === 'none') {
+        // Nothing to show (e.g. a vote or a removed reaction from an older app version).
+        // Browsers require a notification for each push, so show one and remove it at once.
+        await self.registration.showNotification('Haven', { tag: 'haven-silent', silent: true, icon: '/icons/icon-192.png', badge: '/icons/badge-96.png' });
+        (await self.registration.getNotifications({ tag: 'haven-silent' })).forEach((n) => n.close());
+        return;
+      }
+      note = got;
     }
     await self.registration.showNotification(note?.title ?? 'Haven', {
       body: note?.body ?? ((await idbGet<string>('meta', 'langSent').catch(() => undefined)) === 'de' ? 'Du hast eine neue Nachricht' : 'You have a new message'),

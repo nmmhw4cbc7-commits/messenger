@@ -759,7 +759,8 @@ export async function vote(msg: Msg, choices: number[]) {
   const me = getState().me;
   if (!me) return;
   await applyVote(msg.id, me.id, choices);
-  await sendPayload(msg.convId, { type: 'vote', target: msg.id, choices });
+  // Votes show up in the poll; they never wake anyone's phone.
+  await sendPayload(msg.convId, { type: 'vote', target: msg.id, choices }, { pushTo: [] });
 }
 
 async function applyVote(targetId: string, userId: string, choices: number[]) {
@@ -781,7 +782,7 @@ export async function markOpened(msg: Msg) {
   const direct = getState().convs[msg.convId]?.kind === 'direct';
   await forgetFile(msg.id, direct ? msg.media : undefined);
   await updateMessage({ ...msg, opened: true, media: msg.media ? { ...msg.media, thumb: undefined, caption: undefined } : undefined });
-  sendPayload(msg.convId, { type: 'opened', target: msg.id }).catch(() => {});
+  sendPayload(msg.convId, { type: 'opened', target: msg.id }, { pushTo: [] }).catch(() => {});
 }
 
 export async function retry(msg: Msg) {
@@ -949,9 +950,9 @@ export async function react(msg: Msg, emoji: string) {
   if (!me) return;
   const next = msg.reactions?.[me.id] === emoji ? '' : emoji;
   await applyReaction(msg.id, me.id, next);
-  // Reactions to a vlog only notify the person who posted it.
-  const extra = msg.media?.vlog ? { pushTo: next && msg.senderId && msg.senderId !== me.id ? [msg.senderId] : [] } : {};
-  await sendPayload(msg.convId, { type: 'reaction', target: msg.id, emoji: next }, extra);
+  // A reaction only notifies the person who wrote the message, and removing one notifies no one.
+  const pushTo = next && msg.senderId && msg.senderId !== me.id ? [msg.senderId] : [];
+  await sendPayload(msg.convId, { type: 'reaction', target: msg.id, emoji: next }, { pushTo });
 }
 
 // ------------------------------------------------------------------ read receipts
