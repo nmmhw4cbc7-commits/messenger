@@ -1,7 +1,7 @@
 // Friends tab: requests, your friends, and people you may know (from your groups).
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../lib/api';
-import { avatarUrl, loadMessages, openDirect, refreshConversations } from '../lib/engine';
+import { avatarUrl, loadMessages, react, openDirect, refreshConversations } from '../lib/engine';
 import { useStore, type Conv, type Msg } from '../lib/store';
 import { cameraPhoto, openPhotoSend, pickFile, useMediaUrl } from './Attachments';
 import { Comments } from './Today';
@@ -119,11 +119,20 @@ function PublicPost({ msg }: { msg: Msg }) {
   const conv = useStore((s) => s.convs[msg.convId]);
   const meId = useStore((s) => s.me?.id);
   const { url } = useMediaUrl(msg);
+  // A like is a ❤️ reaction: it goes to everyone who sees the post, so all see the count.
+  const likes = Object.values(msg.reactions ?? {}).filter((e) => e === '❤️').length;
+  const liked = Boolean(meId && msg.reactions?.[meId] === '❤️');
   const who = msg.senderId === meId ? 'You' : conv?.members.find((m) => m.id === msg.senderId)?.name ?? '';
   return (
     <article class="public-post">
       <header data-no-i18n><strong>{who}</strong> <span>{new Date(msg.createdAt).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span></header>
       {url ? <img src={url} alt="" /> : <div class="center-pad"><Spinner /></div>}
+      <div class="public-like">
+        {msg.senderId !== meId
+          ? <button class={liked ? 'on' : ''} aria-pressed={liked} aria-label="Like" onClick={() => react(msg, '❤️').catch(() => {})}>{liked ? '♥' : '♡'}</button>
+          : <span>♥</span>}
+        <span>{likes} {likes === 1 ? 'like' : 'likes'}</span>
+      </div>
       {msg.media?.caption && <p data-no-i18n>{msg.media.caption}</p>}
       <Comments msg={msg} />
     </article>

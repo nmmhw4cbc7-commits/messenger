@@ -3189,3 +3189,6 @@ button.poll-foot:not(:disabled) { text-decoration: underline; text-underline-off
 .public-post p { margin: 6px 0 0; }
 .public-post .vlog-comments { padding: 6px 0 0; }
 .friends-search { width: 100%; margin: 4px 0 6px; }
+.public-like { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 14px; }
+.public-like button { border: 0; background: none; font-size: 26px; line-height: 1; padding: 0; color: inherit; }
+.public-like button.on, .public-like > span:first-child { color: #d71921; }
