@@ -3188,3 +3188,4 @@ button.poll-foot:not(:disabled) { text-decoration: underline; text-underline-off
 .public-post img { width: 100%; border-radius: 14px; display: block; }
 .public-post p { margin: 6px 0 0; }
 .public-post .vlog-comments { padding: 6px 0 0; }
+.friends-search { width: 100%; margin: 4px 0 6px; }

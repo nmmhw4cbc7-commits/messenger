@@ -1,10 +1,9 @@
 // Friends tab: requests, your friends, and people you may know (from your groups).
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../lib/api';
-import { avatarUrl, loadMessages, openDirect, refreshConversations, sendMedia } from '../lib/engine';
-import { preparePhoto } from '../lib/media';
+import { avatarUrl, loadMessages, openDirect, refreshConversations } from '../lib/engine';
 import { useStore, type Conv, type Msg } from '../lib/store';
-import { cameraPhoto, pickFile, useMediaUrl } from './Attachments';
+import { cameraPhoto, openPhotoSend, pickFile, useMediaUrl } from './Attachments';
 import { Comments } from './Today';
 import { Avatar, Button, Empty, Screen, Spinner, toast } from '../ui/components';
 import { People } from '../ui/icons';
@@ -34,6 +33,8 @@ export function FriendsTab({ active, onChat }: { active: boolean; onChat: (convI
   const [data, setData] = useState<Data | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [mode, setMode] = useState<'friends' | 'public'>('friends');
+  const [q, setQ] = useState('');
+  const hit = (p: Person) => !q.trim() || `${p.name} ${p.username ?? ''}`.toLowerCase().includes(q.trim().toLowerCase().replace(/^@/, ''));
   const load = () => loadFriends().then((d) => { setData(d); refreshConversations().catch(() => {}); }, () => {});
   useEffect(() => { if (active) load(); }, [active]);
 
@@ -63,6 +64,8 @@ export function FriendsTab({ active, onChat }: { active: boolean; onChat: (convI
       </div>
       {mode === 'public' ? <PublicFeed publicId={data?.publicId} /> : !data ? <div class="center-pad"><Spinner /></div> : (
         <div class="friends">
+          <input class="field friends-search" type="search" placeholder="Search name or @username" aria-label="Search" value={q}
+            onInput={(e) => setQ((e.target as HTMLInputElement).value)} />
           {data.incoming.length > 0 && <h3 class="section-title">Friend requests</h3>}
           {data.incoming.map((p) => row(p, <>
             <Button onClick={() => act('accept', p.id)} loading={busy === p.id}>Accept</Button>
@@ -70,9 +73,9 @@ export function FriendsTab({ active, onChat }: { active: boolean; onChat: (convI
           </>))}
           <h3 class="section-title">Your friends</h3>
           {data.friends.length === 0 && <p class="fine-print">No friends yet. Add people below.</p>}
-          {data.friends.map((p) => row(p, <button class="nav-button bold" onClick={() => chat(p)}>Message</button>))}
+          {data.friends.filter(hit).map((p) => row(p, <button class="nav-button bold" onClick={() => chat(p)}>Message</button>))}
           {data.suggestions.length > 0 && <h3 class="section-title">People you may know</h3>}
-          {data.suggestions.map((p) => row(p, data.outgoing.includes(p.id)
+          {data.suggestions.filter(hit).map((p) => row(p, data.outgoing.includes(p.id)
             ? <button class="nav-button" onClick={() => act('remove', p.id)}>Requested</button>
             : <Button onClick={() => act('request', p.id)} loading={busy === p.id}>Add</Button>))}
           {data.friends.length === 0 && data.suggestions.length === 0 && data.incoming.length === 0 && (
@@ -93,25 +96,17 @@ function PublicFeed({ publicId }: { publicId?: string }) {
     .sort((a, b) => b.createdAt - a.createdAt).slice(0, 60);
   const ids = convs.map((c) => c.id).join();
   useEffect(() => { convs.forEach((c) => loadMessages(c.id).catch(() => {})); }, [ids]);
-  const [busy, setBusy] = useState(false);
   const post = async (camera: boolean) => {
     if (!publicId) return;
     const file = camera ? await cameraPhoto() : await pickFile('image/*');
     if (!file) return;
-    const caption = (window.prompt('Caption (optional)') ?? '').trim().slice(0, 300);
-    setBusy(true);
-    try {
-      const p = await preparePhoto(file);
-      await sendMedia(publicId, p.blob, { kind: 'image', w: p.w, h: p.h, ...(caption ? { caption } : {}) });
-      toast('Posted for your friends');
-    } catch (err) { toast(err instanceof Error ? err.message : 'Could not post.', 'error'); }
-    finally { setBusy(false); }
+    openPhotoSend(publicId, file, true);
   };
   return (
     <div class="friends">
       <div class="public-actions">
-        <Button onClick={() => post(true)} loading={busy} disabled={!publicId}>Take photo</Button>
-        <Button variant="secondary" onClick={() => post(false)} disabled={busy || !publicId}>Choose photo</Button>
+        <Button onClick={() => post(true)} disabled={!publicId}>Take photo</Button>
+        <Button variant="secondary" onClick={() => post(false)} disabled={!publicId}>Choose photo</Button>
       </div>
       <p class="fine-print">Only your friends see public posts. End-to-end encrypted.</p>
       {posts.length === 0 && <Empty icon={<People size={32} />} title="Nothing here yet" text="When your friends post in public, it shows up here." />}

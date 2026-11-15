@@ -103,7 +103,12 @@ async function sendPickedFile(convId: string, file: File, viewOnce = false) {
 const HD_KEY = 'haven.photoHD';
 
 /** Look at the photo before sending: HD on or off, optional caption. */
-function PhotoSendSheet({ convId, file: original, close }: { convId: string; file: File; close: () => Promise<void> }) {
+/** The photo send sheet (preview, edit, HD, caption). `noOnce` hides view-once (public posts). */
+export function openPhotoSend(convId: string, file: File, noOnce = false) {
+  getNav().present((close) => <PhotoSendSheet convId={convId} file={file} close={close} noOnce={noOnce} />, { variant: 'full' });
+}
+
+function PhotoSendSheet({ convId, file: original, close, noOnce }: { convId: string; file: File; close: () => Promise<void>; noOnce?: boolean }) {
   const [hd, setHd] = useState(() => { try { return localStorage.getItem(HD_KEY) === '1'; } catch { return false; } });
   const [once, setOnce] = useState(false);
   const [caption, setCaption] = useState('');
@@ -140,7 +145,7 @@ function PhotoSendSheet({ convId, file: original, close }: { convId: string; fil
         <strong>Photo</strong>
         <span class="photo-send-toggles">
           <button class="edit-toggle" onClick={edit} aria-label="Edit photo"><Pencil size={19} /></button>
-          <button class={`once-toggle${once ? ' on' : ''}`} onClick={() => setOnce(!once)} aria-pressed={once} aria-label="View once"><Once size={20} /></button>
+          {!noOnce && <button class={`once-toggle${once ? ' on' : ''}`} onClick={() => setOnce(!once)} aria-pressed={once} aria-label="View once"><Once size={20} /></button>}
           {!once && <button class={`hd-toggle${hd ? ' on' : ''}`} onClick={toggle} aria-pressed={hd} aria-label="Send in HD">HD</button>}
         </span>
       </div>
