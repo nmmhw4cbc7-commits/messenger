@@ -12,6 +12,7 @@ import { errorMessage } from '../lib/api';
 import { Avatar, Button, Spinner, confirmAction, toast, useAsync } from '../ui/components';
 import { PhoneField, type PhoneValue } from '../ui/PhoneField';
 import { getNav } from '../ui/nav';
+import { takePhoto } from '../ui/Camera';
 import { Camera, Close, Contacts, Lock, People, Plus, Trash, ArrowUp, Check, Pencil } from '../ui/icons';
 import { invite } from './NewChat';
 import { ZoomImage } from '../ui/ZoomImage';
@@ -61,12 +62,18 @@ export function openAttachSheet(conv: Conv) {
   getNav().present((close) => <AttachSheet conv={conv} close={close} />, { variant: 'card' });
 }
 
+/** A photo from the in-app camera; falls back to the system camera. */
+export async function cameraPhoto(): Promise<File | null> {
+  try { return await takePhoto(); } catch { return pickFile('image/*', true); }
+}
+
 export function pickFile(accept: string, capture?: boolean): Promise<File | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = accept;
     if (capture) input.setAttribute('capture', 'environment');
+    input.style.display = 'none';
     input.onchange = () => resolve(input.files?.[0] ?? null);
     input.click();
   });
@@ -164,7 +171,7 @@ function AttachSheet({ conv, close }: { conv: Conv; close: () => Promise<void> }
   const options = [
     // The picker must open right in the tap (iOS ignores it otherwise); the sheet closes meanwhile.
     { label: 'Photo or video', icon: <Img />, run: pickThen(() => pickFile('image/*,video/*')) },
-    { label: 'Camera', icon: <Camera />, run: pickThen(() => pickFile('image/*', true)) },
+    { label: 'Camera', icon: <Camera />, run: pickThen(() => cameraPhoto()) },
     {
       label: 'Location',
       icon: <Pin />,

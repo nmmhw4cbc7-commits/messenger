@@ -7,7 +7,7 @@ import {
 } from '../lib/engine';
 import { MediaView, LocationCard, ContactCard, PollCard, VoiceRecorder, openAttachSheet, Mic, Plus, pickFile, canSave, prepareSave, saveToPhotos } from './Attachments';
 import { formatDay, formatTime, sameDay } from '../lib/format';
-import { Avatar, Button, confirmAction, toast } from '../ui/components';
+import { Avatar, Button, actionSheet, confirmAction, toast } from '../ui/components';
 import { getNav, goBack, useNav } from '../ui/nav';
 import { Phone, ForwardIcon } from '../ui/icons';
 import { STICKERS, stickerUrl } from '../lib/stickers';
@@ -474,7 +474,14 @@ function Bubble({ msg, conv, meId, first, last, onReply, onMenu, nameOf }: {
             </span>
           </div>
           {reactions.length > 0 && (
-            <button class="reactions" onClick={openMenu} aria-label="Reactions">
+            <button class="reactions" aria-label="Reactions" onClick={(e) => {
+              e.stopPropagation();
+              // Who reacted with what; "React" opens the usual menu.
+              actionSheet([
+                ...reactions.map(([uid, emo]) => ({ label: `${emo}  ${uid === meId ? 'You' : conv.members.find((m) => m.id === uid)?.name || 'Someone'}`, run: () => {} })),
+                { label: 'React', run: () => openMenu() },
+              ], { title: 'Reactions' });
+            }}>
               {[...new Set(reactions.map(([, e]) => e))].slice(0, 4).map((e) => <span key={e}>{e}</span>)}
               {reactions.length > 1 && <span class="reactions-count">{reactions.length}</span>}
             </button>

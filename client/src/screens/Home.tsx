@@ -256,13 +256,14 @@ function ChatRow({ conv, meId, onOpen }: { conv: Conv; meId?: string; onOpen: ()
       const dx = ev.clientX - x0;
       const dy = ev.clientY - y0;
       if (mode === 'pending') {
-        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+        // Only a clear sideways swipe moves the row; taps and scrolls never do.
+        if (Math.abs(dx) < 22 && Math.abs(dy) < 10) return;
         clearTimeout(timer);
-        mode = Math.abs(dx) > Math.abs(dy) * 1.2 && (dx < 0 || start < 0) ? 'drag' : 'none';
+        mode = Math.abs(dx) > Math.abs(dy) * 2 && (dx < 0 || start < 0) ? 'drag' : 'none';
         if (mode === 'none') return finish();
       }
       if (mode !== 'drag') return;
-      let x = Math.min(0, start + dx);
+      let x = Math.min(0, start + dx + (start < 0 ? 0 : 22));
       if (x < -ACTIONS_WIDTH) x = -ACTIONS_WIDTH + (x + ACTIONS_WIDTH) * 0.3;
       setOffset(x, false);
     };
@@ -270,7 +271,7 @@ function ChatRow({ conv, meId, onOpen }: { conv: Conv; meId?: string; onOpen: ()
       clearTimeout(timer);
       if (mode === 'drag') {
         suppressClick.current = true;
-        if (offset.current < -ACTIONS_WIDTH / 2.5) {
+        if (offset.current < -ACTIONS_WIDTH / 1.6) {
           setOffset(-ACTIONS_WIDTH);
           closeOpenRow = close;
         } else close();

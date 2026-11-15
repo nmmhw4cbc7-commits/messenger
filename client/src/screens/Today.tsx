@@ -18,7 +18,7 @@ import { getNav, useNav } from '../ui/nav';
 import { Bell, Camera, ChevronRight, ChevronDown, PersonAdd, Chats as ChatIcon, Close, Share, Copy, Check, Plus } from '../ui/icons';
 import { PeoplePicker } from './NewChat';
 import { ChatScreen } from './Chat';
-import { openViewer, pickFile, useMediaUrl, useLongPress, saveToPhotos, prepareSave, canSave } from './Attachments';
+import { openViewer, pickFile, cameraPhoto, useMediaUrl, useLongPress, saveToPhotos, prepareSave, canSave } from './Attachments';
 import { markWhatsNewSeen, openGuide } from './Guide';
 import { Faces, membersText } from './JoinInvite';
 import { clearJoin, codeFrom, inviteUrl, pendingJoin, previewInvite, type InvitePreview } from '../lib/invite';
@@ -222,7 +222,7 @@ function MyTurn({ conv, today, posts }: { conv: Conv; today: string; posts: Msg[
     }
   };
   const addPhoto = async (capture: boolean) => {
-    const file = await pickFile('image/*', capture);
+    const file = capture ? await cameraPhoto() : await pickFile('image/*');
     if (!file) return;
     try {
       if (!file.type.startsWith('image/')) throw new Error('Please choose a photo.');
