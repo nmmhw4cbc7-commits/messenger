@@ -286,6 +286,13 @@ const DE: Record<string, string> = {
   'Add a friend group': 'Freundesgruppe hinzufügen', 'You can be in up to 10 friend groups.': 'Du kannst in bis zu 10 Freundesgruppen sein.',
   'You can be in several friend groups. Switch or add one with the button next to the bell.': 'Du kannst in mehreren Freundesgruppen sein. Wechseln oder hinzufügen geht mit dem Button neben der Glocke.',
   // Passkeys & usernames
+  'Public': 'Öffentlich',
+  'Caption (optional)': 'Bildunterschrift (optional)',
+  'Posted for your friends': 'Für deine Freunde gepostet',
+  'Only your friends see public posts. End-to-end encrypted.': 'Nur deine Freunde sehen öffentliche Posts. Ende-zu-Ende verschlüsselt.',
+  'Nothing here yet': 'Noch nichts hier',
+  'When your friends post in public, it shows up here.': 'Wenn deine Freunde öffentlich posten, erscheint es hier.',
+  'Public mode: post photos for all your friends and comment on their posts – in the Friends tab.': 'Öffentlicher Modus: poste Fotos für alle deine Freunde und kommentiere ihre Posts – im Reiter Freunde.',
   'Friends': 'Freunde',
   'Friend requests': 'Freundschaftsanfragen',
   'Your friends': 'Deine Freunde',

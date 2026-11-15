@@ -1,12 +1,19 @@
 // Friends tab: requests, your friends, and people you may know (from your groups).
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../lib/api';
-import { avatarUrl, openDirect } from '../lib/engine';
+import { avatarUrl, loadMessages, openDirect, refreshConversations, sendMedia } from '../lib/engine';
+import { preparePhoto } from '../lib/media';
+import { useStore, type Conv, type Msg } from '../lib/store';
+import { cameraPhoto, pickFile, useMediaUrl } from './Attachments';
+import { Comments } from './Today';
 import { Avatar, Button, Empty, Screen, Spinner, toast } from '../ui/components';
 import { People } from '../ui/icons';
 
 interface Person { id: string; name: string; username: string | null; avatar_version: number }
-interface Data { friends: Person[]; incoming: Person[]; outgoing: string[]; suggestions: Person[] }
+interface Data { friends: Person[]; incoming: Person[]; outgoing: string[]; suggestions: Person[]; publicId?: string }
+
+/** Hidden conversation that carries someone's public posts to their friends. */
+export const isPublicConv = (c: Conv) => c.kind === 'group' && c.title === '\u2063public';
 
 let pending = 0;
 const listeners = new Set<(n: number) => void>();
@@ -26,7 +33,8 @@ export async function loadFriends(): Promise<Data> {
 export function FriendsTab({ active, onChat }: { active: boolean; onChat: (convId: string) => void }) {
   const [data, setData] = useState<Data | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const load = () => loadFriends().then(setData, () => {});
+  const [mode, setMode] = useState<'friends' | 'public'>('friends');
+  const load = () => loadFriends().then((d) => { setData(d); refreshConversations().catch(() => {}); }, () => {});
   useEffect(() => { if (active) load(); }, [active]);
 
   const act = async (path: string, userId: string) => {
@@ -48,8 +56,12 @@ export function FriendsTab({ active, onChat }: { active: boolean; onChat: (convI
   );
 
   return (
-    <Screen title="Friends" large>
-      {!data ? <div class="center-pad"><Spinner /></div> : (
+    <Screen title={mode === 'public' ? 'Public' : 'Friends'} large>
+      <div class="maker-switch friends-switch">
+        <button class={mode === 'friends' ? 'on' : ''} onClick={() => setMode('friends')}>Friends</button>
+        <button class={mode === 'public' ? 'on' : ''} onClick={() => setMode('public')}>Public</button>
+      </div>
+      {mode === 'public' ? <PublicFeed publicId={data?.publicId} /> : !data ? <div class="center-pad"><Spinner /></div> : (
         <div class="friends">
           {data.incoming.length > 0 && <h3 class="section-title">Friend requests</h3>}
           {data.incoming.map((p) => row(p, <>
@@ -69,5 +81,56 @@ export function FriendsTab({ active, onChat }: { active: boolean; onChat: (convI
         </div>
       )}
     </Screen>
+  );
+}
+
+/** Posts your friends shared in public mode, newest first, with comments. */
+function PublicFeed({ publicId }: { publicId?: string }) {
+  const all = useStore((s) => s.convs);
+  const messages = useStore((s) => s.messages);
+  const convs = Object.values(all).filter(isPublicConv);
+  const posts = convs.flatMap((c) => (messages[c.id] ?? []).filter((m) => m.kind === 'media' && !m.deleted))
+    .sort((a, b) => b.createdAt - a.createdAt).slice(0, 60);
+  const ids = convs.map((c) => c.id).join();
+  useEffect(() => { convs.forEach((c) => loadMessages(c.id).catch(() => {})); }, [ids]);
+  const [busy, setBusy] = useState(false);
+  const post = async (camera: boolean) => {
+    if (!publicId) return;
+    const file = camera ? await cameraPhoto() : await pickFile('image/*');
+    if (!file) return;
+    const caption = (window.prompt('Caption (optional)') ?? '').trim().slice(0, 300);
+    setBusy(true);
+    try {
+      const p = await preparePhoto(file);
+      await sendMedia(publicId, p.blob, { kind: 'image', w: p.w, h: p.h, ...(caption ? { caption } : {}) });
+      toast('Posted for your friends');
+    } catch (err) { toast(err instanceof Error ? err.message : 'Could not post.', 'error'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div class="friends">
+      <div class="public-actions">
+        <Button onClick={() => post(true)} loading={busy} disabled={!publicId}>Take photo</Button>
+        <Button variant="secondary" onClick={() => post(false)} disabled={busy || !publicId}>Choose photo</Button>
+      </div>
+      <p class="fine-print">Only your friends see public posts. End-to-end encrypted.</p>
+      {posts.length === 0 && <Empty icon={<People size={32} />} title="Nothing here yet" text="When your friends post in public, it shows up here." />}
+      {posts.map((m) => <PublicPost key={m.id} msg={m} />)}
+    </div>
+  );
+}
+
+function PublicPost({ msg }: { msg: Msg }) {
+  const conv = useStore((s) => s.convs[msg.convId]);
+  const meId = useStore((s) => s.me?.id);
+  const { url } = useMediaUrl(msg);
+  const who = msg.senderId === meId ? 'You' : conv?.members.find((m) => m.id === msg.senderId)?.name ?? '';
+  return (
+    <article class="public-post">
+      <header data-no-i18n><strong>{who}</strong> <span>{new Date(msg.createdAt).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span></header>
+      {url ? <img src={url} alt="" /> : <div class="center-pad"><Spinner /></div>}
+      {msg.media?.caption && <p data-no-i18n>{msg.media.caption}</p>}
+      <Comments msg={msg} />
+    </article>
   );
 }

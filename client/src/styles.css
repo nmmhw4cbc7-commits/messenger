@@ -3180,3 +3180,11 @@ button.poll-foot:not(:disabled) { text-decoration: underline; text-underline-off
 .friend-actions { display: flex; gap: 6px; align-items: center; }
 .friend-actions .button { min-height: 34px; padding: 0 14px; width: auto; font-size: 14px; }
 .center-pad { display: flex; justify-content: center; padding: 40px; }
+.friends-switch { margin: 0 16px 8px; }
+.public-actions { display: flex; gap: 8px; margin-top: 8px; }
+.public-post { margin: 16px 0; }
+.public-post header { font-size: 14px; margin-bottom: 6px; }
+.public-post header span { opacity: .55; font-size: 12px; }
+.public-post img { width: 100%; border-radius: 14px; display: block; }
+.public-post p { margin: 6px 0 0; }
+.public-post .vlog-comments { padding: 6px 0 0; }

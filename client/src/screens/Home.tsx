@@ -23,15 +23,15 @@ const SettingsPane = memo(() => <SettingsTab />);
 import { checkBackupOnStart } from './Backup';
 import { maybeAskPasskey, maybeAskUsername, openPasskeySheet } from './Passkey';
 import { maybeAskInstall } from './JoinInvite';
-import { FriendsTab, loadFriends, useFriendRequests } from './Friends';
+import { FriendsTab, isPublicConv, loadFriends, useFriendRequests } from './Friends';
 
 const PLACE_KEY = 'haven.place';
 /** Where the user was within the last 30 minutes, if anywhere. */
-function restoredPlace(): { tab: 'today' | 'chats' | 'settings'; chat: string | null } | null {
+function restoredPlace(): { tab: 'today' | 'chats' | 'friends' | 'settings'; chat: string | null } | null {
   try {
     const p = JSON.parse(localStorage.getItem(PLACE_KEY) || 'null');
     if (!p || Date.now() - p.at > 30 * 60_000) return null;
-    return { tab: ['today', 'chats', 'settings'].includes(p.tab) ? p.tab : 'today', chat: typeof p.chat === 'string' ? p.chat : null };
+    return { tab: ['today', 'chats', 'friends', 'settings'].includes(p.tab) ? p.tab : 'today', chat: typeof p.chat === 'string' ? p.chat : null };
   } catch {
     return null;
   }
@@ -63,6 +63,10 @@ export function Home() {
       nav.push(<ChatScreen convId={convId} />);
     };
     const openScreen = (screen: string) => {
+      if (screen === 'friends') {
+        setTab('friends');
+        return;
+      }
       if (screen === 'today') {
         setTab('today');
         return;
@@ -96,7 +100,7 @@ export function Home() {
   }, []);
   const requests = useFriendRequests();
   useEffect(() => { loadFriends().catch(() => {}); }, []);
-  const unread = useStore((s) => Object.values(s.convs).reduce((n, c) => n + (c.hidden ? 0 : c.unread), 0));
+  const unread = useStore((s) => Object.values(s.convs).reduce((n, c) => n + (c.hidden || isPublicConv(c) ? 0 : c.unread), 0));
   const myTurn = useStore((s) => Boolean(s.circle?.id && s.me && s.circle.picks.some((p) => p.day === s.circle!.today && p.userId === s.me!.id)));
   const unseenActivity = useStore((s) => s.activity.some((a) => a.at > s.activitySeen));
 
@@ -152,7 +156,7 @@ function ChatsTab() {
     const matches = (c: Conv) =>
       !q || convTitle(c, me?.id).toLowerCase().includes(q) || (digits.length >= 3 && c.members.some((m) => m.id !== me?.id && (m.phone || '').includes(digits))) || c.members.some((m) => m.id !== me?.id && !!m.username && m.username.includes(q.replace(/^@/, '')));
     return Object.values(convs)
-      .filter((c) => !c.hidden && (c.last || c.kind === 'group' || c.createdBy === me?.id || c.updatedAt > c.createdAt))
+      .filter((c) => !c.hidden && !isPublicConv(c) && (c.last || c.kind === 'group' || c.createdBy === me?.id || c.updatedAt > c.createdAt))
       .filter(matches)
       .sort((a, b) => (b.last?.sortKey ?? b.createdAt) - (a.last?.sortKey ?? a.createdAt));
   }, [convs, query, me?.id]);

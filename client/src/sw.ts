@@ -103,7 +103,8 @@ async function preview(): Promise<{ title: string; body: string; tag: string; co
     if (!result.ok) continue;
     const member = conv?.members.find((x) => x.id === m.senderId);
     const sender = aliases?.[m.senderId] || member?.name || member?.phone || L('Someone', 'Jemand');
-    const title = conv?.kind === 'group' ? `${sender} · ${conv.title}` : sender;
+    const pub = conv?.title === '\u2063public';
+    const title = conv?.kind === 'group' && !pub ? `${sender} · ${conv.title}` : sender;
     const p = result.payload;
     let body: string;
     if (p.type === 'text') {
@@ -117,6 +118,7 @@ async function preview(): Promise<{ title: string; body: string; tag: string; co
       body = L(`Reacted ${p.emoji}`, `Hat mit ${p.emoji} reagiert`);
     } else if (p.type === 'media') {
       if (p.media.vlog) continue; // announced separately as "X just vlogged"
+      if (pub) return { title, body: L('Posted in public', 'Hat öffentlich gepostet'), tag: 'haven-public', open: 'friends' };
       body = p.media.sticker ? 'Sticker' : p.media.viewOnce ? L('Photo · view once', 'Foto · einmal ansehen') : p.media.kind === 'voice' ? L('Voice message', 'Sprachnachricht') : p.media.kind === 'video' ? 'Video' : L('Photo', 'Foto');
       if (p.media.caption && !p.media.viewOnce) body += ` · ${p.media.caption}`;
     } else if (p.type === 'location') body = L('Location', 'Standort');

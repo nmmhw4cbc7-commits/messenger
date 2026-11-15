@@ -17,6 +17,28 @@ async function me(req: Request): Promise<string | null> {
   return row?.user_id ?? null;
 }
 
+// Each person has one hidden "public" conversation: its members are the person and their friends.
+// Posts in it are normal end-to-end encrypted messages, so the server never sees them.
+const PUBLIC = '\u2063public';
+async function publicConv(uid: string): Promise<string> {
+  const [c] = await sql`select id from haven.conversations where created_by = ${uid} and title = ${PUBLIC} and kind = 'group'`;
+  if (c) return c.id;
+  const id = crypto.randomUUID().replace(/-/g, '').slice(0, 22);
+  const t = Date.now();
+  await sql`insert into haven.conversations (id, kind, title, created_by, created_at, updated_at) values (${id}, 'group', ${PUBLIC}, ${uid}, ${t}, ${t})`;
+  await sql`insert into haven.members (conversation_id, user_id, role, joined_at) values (${id}, ${uid}, 'admin', ${t})`;
+  return id;
+}
+async function link(x: string, y: string) {
+  const [cx, cy] = [await publicConv(x), await publicConv(y)];
+  const t = Date.now();
+  await sql`insert into haven.members (conversation_id, user_id, role, joined_at) values (${cx}, ${y}, 'member', ${t}), (${cy}, ${x}, 'member', ${t}) on conflict do nothing`;
+}
+async function unlink(x: string, y: string) {
+  await sql`delete from haven.members m using haven.conversations c where c.id = m.conversation_id and c.title = ${PUBLIC}
+            and ((c.created_by = ${x} and m.user_id = ${y}) or (c.created_by = ${y} and m.user_id = ${x}))`;
+}
+
 const people = (ids: string[]) => ids.length
   ? sql`select id, name, username, avatar_version from haven.users where id = any(${ids})` : Promise.resolve([]);
 
@@ -42,7 +64,7 @@ Deno.serve(async (req) => {
                              where m1.user_id = ${uid} limit 200`;
       const suggestions = near.map((r) => r.user_id as string).filter((id) => !known.has(id));
       const [f, i, s] = await Promise.all([people(friends), people(incoming), people(suggestions)]);
-      return json(200, { friends: f, incoming: i, outgoing, suggestions: s });
+      return json(200, { friends: f, incoming: i, outgoing, suggestions: s, publicId: await publicConv(uid) });
     }
 
     const body = await req.json().catch(() => ({}));
@@ -56,14 +78,17 @@ Deno.serve(async (req) => {
       if (n >= 100) return json(429, { error: 'too_many' });
       // They already asked you: this accepts.
       const [back] = await sql`update haven.friends set status = 'accepted' where a = ${other} and b = ${uid} returning 1`;
-      if (!back) await sql`insert into haven.friends (a, b, status, created_at) values (${uid}, ${other}, 'pending', ${Date.now()}) on conflict do nothing`;
+      if (back) await link(uid, other);
+      else await sql`insert into haven.friends (a, b, status, created_at) values (${uid}, ${other}, 'pending', ${Date.now()}) on conflict do nothing`;
       return json(204, null);
     }
     if (req.method === 'POST' && path === '/accept') {
-      await sql`update haven.friends set status = 'accepted' where a = ${other} and b = ${uid}`;
+      const [okay] = await sql`update haven.friends set status = 'accepted' where a = ${other} and b = ${uid} returning 1`;
+      if (okay) await link(uid, other);
       return json(204, null);
     }
     if (req.method === 'POST' && path === '/remove') {
+      await unlink(uid, other);
       await sql`delete from haven.friends where (a = ${uid} and b = ${other}) or (a = ${other} and b = ${uid})`;
       return json(204, null);
     }

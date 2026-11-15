@@ -359,7 +359,7 @@ function AddReactionIcon() {
   );
 }
 
-function Comments({ msg }: { msg: Msg }) {
+export function Comments({ msg }: { msg: Msg }) {
   const meId = useStore((s) => s.me?.id);
   const conv = useStore((s) => s.convs[msg.convId]);
   const [text, setText] = useState('');
