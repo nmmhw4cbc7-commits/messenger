@@ -120,6 +120,7 @@ export type Payload =
   | { type: 'poll'; question: string; options: string[]; multi: boolean }
   | { type: 'sticker'; id: string; value?: string }
   | { type: 'vote'; target: string; choices: number[] }
+  | { type: 'comment'; target: string; text: string }
   | { type: 'opened'; target: string }
   | { type: 'edit'; target: string; text: string }
   | { type: 'delete'; target: string }
@@ -191,6 +192,8 @@ function cleanPayloadBody(p: unknown): Payload | null {
       const mentions = Array.isArray(o.mentions) ? [...new Set(o.mentions.filter((x): x is string => typeof x === 'string' && ID.test(x)))].slice(0, 20) : [];
       return { type: 'text', text: o.text.slice(0, 8000), ...(reply ? { reply } : {}), ...(mentions.length ? { mentions } : {}) };
     }
+    case 'comment':
+      return typeof o.target === 'string' && ID.test(o.target) && typeof o.text === 'string' && o.text.trim() ? { type: 'comment', target: o.target, text: o.text.trim().slice(0, 500) } : null;
     case 'reaction':
       return typeof o.target === 'string' && ID.test(o.target) && str(o.emoji, 16) ? { type: 'reaction', target: o.target, emoji: o.emoji as string } : null;
     case 'media': {

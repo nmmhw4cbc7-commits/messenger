@@ -8,7 +8,7 @@ import { pickEmoji } from '../ui/EmojiPicker';
 import { getState, useStore, type Activity, type Conv, type Member, type Msg } from '../lib/store';
 import {
   addMembers, avatarUrl, selectCircle, createCircle, createCircleInvite, deleteForEveryone, displayName, formatDuration, joinCircle, loadMessages, markActivitySeen,
-  react, refreshCircle, sendMedia, vlogPosts, vlogUsage, VLOG_LIMITS,
+  comment, react, refreshCircle, sendMedia, vlogPosts, vlogUsage, VLOG_LIMITS,
 } from '../lib/engine';
 import { formatListTime } from '../lib/format';
 import { compressVideo, MAX_FILE, preparePhoto, prepareVideo } from '../lib/media';
@@ -359,6 +359,32 @@ function AddReactionIcon() {
   );
 }
 
+function Comments({ msg }: { msg: Msg }) {
+  const meId = useStore((s) => s.me?.id);
+  const conv = useStore((s) => s.convs[msg.convId]);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const list = msg.comments ?? [];
+  const send = async (e: Event) => {
+    e.preventDefault();
+    if (!text.trim() || busy) return;
+    setBusy(true);
+    try { await comment(msg, text); setText(''); } catch (err) { toast(errorMessage(err), 'error'); } finally { setBusy(false); }
+  };
+  return (
+    <div class="vlog-comments">
+      {list.map((c) => (
+        <p key={c.id} class="vlog-comment"><strong>{c.userId === meId ? 'You' : firstName(conv?.members.find((m) => m.id === c.userId))}</strong> <span data-no-i18n>{c.text}</span></p>
+      ))}
+      <form class="vlog-comment-form" onSubmit={send}>
+        <input class="field" type="text" maxLength={500} placeholder="Add a comment…" aria-label="Comment" value={text} enterKeyHint="send"
+          onInput={(e) => setText((e.target as HTMLInputElement).value)} />
+        {text.trim() && <button class="nav-button bold" disabled={busy}>Send</button>}
+      </form>
+    </div>
+  );
+}
+
 function Reactions({ msg }: { msg: Msg }) {
   const meId = useStore((s) => s.me?.id);
   const conv = useStore((s) => s.convs[msg.convId]);
@@ -425,6 +451,7 @@ function TimelineItem({ msg }: { msg: Msg }) {
       </button>
       {media.caption && <p class="vlog-item-caption">{media.caption}</p>}
       {msg.status !== 'pending' && msg.status !== 'failed' && <Reactions msg={msg} />}
+      {msg.status !== 'pending' && msg.status !== 'failed' && <Comments msg={msg} />}
       {mine && msg.status !== 'pending' && (
         <button class="link-button vlog-delete" onClick={async () => {
           if (await confirmAction({ title: 'Delete this post?', message: 'It will be removed for everyone in your friend group.', confirm: 'Delete', danger: true })) {

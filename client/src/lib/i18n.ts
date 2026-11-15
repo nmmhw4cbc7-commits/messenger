@@ -286,6 +286,10 @@ const DE: Record<string, string> = {
   'Add a friend group': 'Freundesgruppe hinzufügen', 'You can be in up to 10 friend groups.': 'Du kannst in bis zu 10 Freundesgruppen sein.',
   'You can be in several friend groups. Switch or add one with the button next to the bell.': 'Du kannst in mehreren Freundesgruppen sein. Wechseln oder hinzufügen geht mit dem Button neben der Glocke.',
   // Passkeys & usernames
+  'Comment under vlog posts – everyone in your friend group sees it.': 'Kommentiere unter Vlog-Posts – alle in deiner Freundesgruppe sehen es.',
+  'New camera: opens straight away, double-tap to flip it.': 'Neue Kamera: öffnet sofort, Doppeltipp dreht sie.',
+  'Tap the reactions under a message to see who reacted.': 'Tippe auf die Reaktionen unter einer Nachricht, um zu sehen, wer reagiert hat.',
+  'Add a comment…': 'Kommentieren…', 'Comment': 'Kommentar',
   'React': 'Reagieren',
   'Flip camera': 'Kamera drehen',
   'Save to Photos': 'In Fotos sichern', 'Save photo': 'Foto sichern', 'Save video': 'Video sichern', 'Saved': 'Gespeichert', 'Could not save this file.': 'Die Datei konnte nicht gespeichert werden.',

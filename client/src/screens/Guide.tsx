@@ -49,10 +49,13 @@ function Guide({ close }: { close: () => Promise<void> }) {
 // ------------------------------------------------------------------ what's new
 
 /** Bump with every update that has something to tell. */
-export const WHATS_NEW_VERSION = '2026-11-09c';
+export const WHATS_NEW_VERSION = '2026-11-15';
 const SEEN_KEY = 'haven.whatsNewSeen';
 
 const WHATS_NEW: string[] = [
+  'Comment under vlog posts – everyone in your friend group sees it.',
+  'New camera: opens straight away, double-tap to flip it.',
+  'Tap the reactions under a message to see who reacted.',
   'Make your own stickers: tap the sticker icon, then “From photo” – Haven cuts out the person or object automatically.',
   'New: Haven stickers – tap the sticker icon in the message field.',
   'Edit photos before sending – draw, write and add Haven stickers. View-once photos can have a caption too.',

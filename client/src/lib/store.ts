@@ -69,6 +69,8 @@ export interface Msg {
   reply?: ReplyRef;
   /** userId -> emoji */
   reactions?: Record<string, string>;
+  /** Comments under a vlog post (oldest first). */
+  comments?: { id: string; userId: string; text: string; at: number }[];
   media?: MediaPayload;
   location?: { lat: number; lng: number; acc?: number };
   contactCard?: { name: string; phone: string };

@@ -3163,3 +3163,9 @@ button.poll-foot:not(:disabled) { text-decoration: underline; text-underline-off
 .cam-shutter { width: 74px; height: 74px; border-radius: 50%; border: 5px solid #fff; background: rgba(255,255,255,.25); }
 .cam-shutter:active { background: #fff; }
 .cam-flip { width: 48px; height: 48px; border-radius: 50%; border: 0; background: rgba(0,0,0,.45); color: #fff; font-size: 24px; }
+
+/* Vlog comments */
+.vlog-comments { padding: 4px 16px 12px; display: flex; flex-direction: column; gap: 4px; }
+.vlog-comment { margin: 0; font-size: 14px; line-height: 1.35; word-break: break-word; }
+.vlog-comment-form { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.vlog-comment-form .field { flex: 1; min-height: 36px; padding: 6px 12px; font-size: 14px; }

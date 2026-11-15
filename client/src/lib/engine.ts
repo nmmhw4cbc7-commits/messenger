@@ -945,6 +945,21 @@ async function applyReaction(targetId: string, userId: string, emoji: string) {
 }
 
 /** React to a message; picking the same emoji again removes the reaction. */
+async function applyComment(targetId: string, c: { id: string; userId: string; text: string; at: number }) {
+  const msg = await idb.get<Msg>('messages', targetId);
+  if (!msg || msg.comments?.some((x) => x.id === c.id)) return;
+  await updateMessage({ ...msg, comments: [...(msg.comments ?? []), { id: c.id, userId: c.userId, text: c.text, at: c.at }].slice(-200) });
+}
+
+/** Comment under a vlog post; everyone in the friend group sees it, the poster gets a notification. */
+export async function comment(msg: Msg, text: string) {
+  const me = getState().me;
+  const clean = text.trim().slice(0, 500);
+  if (!me || !clean) return;
+  await applyComment(msg.id, { id: randomId(), userId: me.id, text: clean, at: Date.now() });
+  await sendPayload(msg.convId, { type: 'comment', target: msg.id, text: clean }, { pushTo: msg.senderId && msg.senderId !== me.id ? [msg.senderId] : [] });
+}
+
 export async function react(msg: Msg, emoji: string) {
   const me = getState().me;
   if (!me) return;
@@ -1037,6 +1052,7 @@ async function processBatch(batch: SyncMessage[]) {
 
   const out: Msg[] = [];
   const reactions: { target: string; userId: string; emoji: string }[] = [];
+  const comments: { target: string; id: string; userId: string; text: string; at: number }[] = [];
   const votes: { target: string; userId: string; choices: number[] }[] = [];
   const opened: { target: string; userId: string }[] = [];
   const changes: { target: string; userId: string; text: string | null }[] = [];
@@ -1065,6 +1081,10 @@ async function processBatch(batch: SyncMessage[]) {
     if (!result.ok && result.reason === 'bad_signature' && !refreshedOnce) {
       await ensureFresh();
       result = await tryDecrypt();
+    }
+    if (result.ok && result.payload.type === 'comment') {
+      comments.push({ target: result.payload.target, id: m.id, userId: m.senderId!, text: result.payload.text, at: m.createdAt ?? Date.now() });
+      continue;
     }
     if (result.ok && result.payload.type === 'reaction') {
       reactions.push({ target: result.payload.target, userId: m.senderId!, emoji: result.payload.emoji });
@@ -1107,6 +1127,7 @@ async function processBatch(batch: SyncMessage[]) {
   if (refreshAfter) await refreshConversations().catch(() => {});
   await addMessages(out, true);
   for (const r of reactions) await applyReaction(r.target, r.userId, r.emoji);
+  for (const c of comments) await applyComment(c.target, c);
   for (const c of changes) await applyChange(c.target, c.userId, c.text);
   await noteActivity(out, reactions, me.id);
   for (const v of votes) await applyVote(v.target, v.userId, v.choices);
