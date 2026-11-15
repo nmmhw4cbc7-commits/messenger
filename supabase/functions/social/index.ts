@@ -59,9 +59,11 @@ Deno.serve(async (req) => {
       const incoming = rows.filter((r) => r.status === 'pending' && r.b === uid).map((r) => r.a);
       const outgoing = rows.filter((r) => r.status === 'pending' && r.a === uid).map((r) => r.b);
       const known = new Set([uid, ...friends, ...incoming, ...outgoing]);
-      // Suggestions: people you share a chat or group with.
-      const near = await sql`select distinct m2.user_id from haven.members m1 join haven.members m2 on m2.conversation_id = m1.conversation_id
-                             where m1.user_id = ${uid} limit 200`;
+      // Suggestions: every Haven user, except people you already have a one-to-one chat with.
+      const near = await sql`select u.id as user_id from haven.users u where u.id <> ${uid} and not exists (
+                               select 1 from haven.conversations c join haven.members a on a.conversation_id = c.id and a.user_id = ${uid}
+                               join haven.members b on b.conversation_id = c.id and b.user_id = u.id where c.kind = 'direct')
+                             order by u.created_at desc limit 300`;
       const suggestions = near.map((r) => r.user_id as string).filter((id) => !known.has(id));
       const [f, i, s] = await Promise.all([people(friends), people(incoming), people(suggestions)]);
       return json(200, { friends: f, incoming: i, outgoing, suggestions: s, publicId: await publicConv(uid) });
