@@ -7,11 +7,15 @@
   "cleanUrls": true,
   "rewrites": [
     {
+      "source": "/social/:path*",
+      "destination": "https://dufmhzcqixajtneiktin.supabase.co/functions/v1/social/:path*"
+    },
+    {
       "source": "/api/:path*",
       "destination": "https://dufmhzcqixajtneiktin.supabase.co/functions/v1/api/:path*"
     },
     {
-      "source": "/((?!api/|assets/|icons/|vendor/|sw\\.js|manifest\\.webmanifest).*)",
+      "source": "/((?!api/|social/|assets/|icons/|vendor/|sw\\.js|manifest\\.webmanifest).*)",
       "destination": "/index.html"
     }
   ],

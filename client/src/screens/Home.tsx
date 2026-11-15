@@ -5,7 +5,7 @@ import { chatAvatarUrl, convTitle, displayName, otherMember, deleteChat, markRea
 import { formatListTime } from '../lib/format';
 import { t } from '../lib/i18n';
 import { Avatar, Empty, NavButton, Screen, Spinner, actionSheet, confirmAction } from '../ui/components';
-import { Chats, Compose, Gear, Lock, Search, Clock, Alert, Check, Trash } from '../ui/icons';
+import { Chats, Compose, Gear, People, Lock, Search, Clock, Alert, Check, Trash } from '../ui/icons';
 import { openLayers, useNav } from '../ui/nav';
 import { maybeShowWhatsNew } from './Guide';
 import { ChatScreen } from './Chat';
@@ -23,6 +23,7 @@ const SettingsPane = memo(() => <SettingsTab />);
 import { checkBackupOnStart } from './Backup';
 import { maybeAskPasskey, maybeAskUsername, openPasskeySheet } from './Passkey';
 import { maybeAskInstall } from './JoinInvite';
+import { FriendsTab, loadFriends, useFriendRequests } from './Friends';
 
 const PLACE_KEY = 'haven.place';
 /** Where the user was within the last 30 minutes, if anywhere. */
@@ -37,7 +38,7 @@ function restoredPlace(): { tab: 'today' | 'chats' | 'settings'; chat: string | 
 }
 export function Home() {
   const nav = useNav();
-  const [tab, setTab] = useState<'today' | 'chats' | 'settings'>(() => restoredPlace()?.tab ?? 'today');
+  const [tab, setTab] = useState<'today' | 'chats' | 'friends' | 'settings'>(() => restoredPlace()?.tab ?? 'today');
   const openConvId = useStore((s) => s.openConvId);
 
   // iOS may close the app in the background; it then starts fresh. Remember where
@@ -93,6 +94,8 @@ export function Home() {
     const timer = setTimeout(() => { if (openLayers() === 0 && !maybeAskInstall() && !maybeAskPasskey() && !maybeAskUsername() && !maybeShowWhatsNew()) checkBackupOnStart(); }, 1800);
     return () => { clearTimeout(timer); navigator.serviceWorker?.removeEventListener('message', onMessage); };
   }, []);
+  const requests = useFriendRequests();
+  useEffect(() => { loadFriends().catch(() => {}); }, []);
   const unread = useStore((s) => Object.values(s.convs).reduce((n, c) => n + (c.hidden ? 0 : c.unread), 0));
   const myTurn = useStore((s) => Boolean(s.circle?.id && s.me && s.circle.picks.some((p) => p.day === s.circle!.today && p.userId === s.me!.id)));
   const unseenActivity = useStore((s) => s.activity.some((a) => a.at > s.activitySeen));
@@ -101,6 +104,7 @@ export function Home() {
     <div class="home">
       <div class={`tab-pane${tab === 'today' ? ' active' : ''}`}><TodayPane /></div>
       <div class={`tab-pane${tab === 'chats' ? ' active' : ''}`}><ChatsPane /></div>
+      <div class={`tab-pane${tab === 'friends' ? ' active' : ''}`}><FriendsTab active={tab === 'friends'} onChat={(id) => { setTab('chats'); nav.push(<ChatScreen convId={id} />); }} /></div>
       <div class={`tab-pane${tab === 'settings' ? ' active' : ''}`}><SettingsPane /></div>
       <nav class="tabbar" aria-label="Main">
         <button class={tab === 'today' ? 'active' : ''} onClick={() => setTab('today')} aria-current={tab === 'today'}>
@@ -116,6 +120,13 @@ export function Home() {
             {unread > 0 && <span class="tab-badge">{unread > 99 ? '99+' : unread}</span>}
           </span>
           <span>Chats</span>
+        </button>
+        <button class={tab === 'friends' ? 'active' : ''} onClick={() => setTab('friends')} aria-current={tab === 'friends'}>
+          <span class="tab-icon">
+            <People size={26} />
+            {requests > 0 && <span class="tab-badge">{requests}</span>}
+          </span>
+          <span>Friends</span>
         </button>
         <button class={tab === 'settings' ? 'active' : ''} onClick={() => setTab('settings')} aria-current={tab === 'settings'}>
           <span class="tab-icon"><Gear size={26} /></span>

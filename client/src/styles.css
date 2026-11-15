@@ -3169,3 +3169,14 @@ button.poll-foot:not(:disabled) { text-decoration: underline; text-underline-off
 .vlog-comment { margin: 0; font-size: 14px; line-height: 1.35; word-break: break-word; }
 .vlog-comment-form { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
 .vlog-comment-form .field { flex: 1; min-height: 36px; padding: 6px 12px; font-size: 14px; }
+
+/* Friends */
+.friends { padding: 0 16px 24px; }
+.friends .section-title { margin: 18px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; opacity: .6; }
+.friend-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; }
+.friend-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.friend-name strong, .friend-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.friend-name span { font-size: 13px; opacity: .6; }
+.friend-actions { display: flex; gap: 6px; align-items: center; }
+.friend-actions .button { min-height: 34px; padding: 0 14px; width: auto; font-size: 14px; }
+.center-pad { display: flex; justify-content: center; padding: 40px; }
