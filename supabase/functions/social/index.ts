@@ -39,6 +39,17 @@ async function unlink(x: string, y: string) {
             and ((c.created_by = ${x} and m.user_id = ${y}) or (c.created_by = ${y} and m.user_id = ${x}))`;
 }
 
+// Push "X wants to be your friend" through the main API's one-off announcement queue.
+async function notify(from: string, to: string) {
+  try {
+    const [[f], [t]] = await Promise.all([sql`select name from haven.users where id = ${from}`, sql`select lang from haven.users where id = ${to}`]);
+    const de = t?.lang === 'de';
+    const value = JSON.stringify({ title: de ? 'Freundschaftsanfrage' : 'Friend request', body: `${f?.name || 'Someone'} ${de ? 'möchte mit dir befreundet sein.' : 'wants to be your friend.'}`, open: 'friends', to: [to] });
+    await sql`insert into haven.kv (key, value) values ('announce', ${value}) on conflict (key) do update set value = excluded.value`;
+    await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/api/announce`, { method: 'POST' });
+  } catch (err) { console.error('notify', String(err)); }
+}
+
 const people = (ids: string[]) => ids.length
   ? sql`select id, name, username, avatar_version from haven.users where id = any(${ids})` : Promise.resolve([]);
 
@@ -81,7 +92,10 @@ Deno.serve(async (req) => {
       // They already asked you: this accepts.
       const [back] = await sql`update haven.friends set status = 'accepted' where a = ${other} and b = ${uid} returning 1`;
       if (back) await link(uid, other);
-      else await sql`insert into haven.friends (a, b, status, created_at) values (${uid}, ${other}, 'pending', ${Date.now()}) on conflict do nothing`;
+      else {
+        const added = await sql`insert into haven.friends (a, b, status, created_at) values (${uid}, ${other}, 'pending', ${Date.now()}) on conflict do nothing returning 1`;
+        if (added.length) await notify(uid, other);
+      }
       return json(204, null);
     }
     if (req.method === 'POST' && path === '/accept') {
