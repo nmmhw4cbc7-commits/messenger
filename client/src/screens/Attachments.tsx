@@ -12,7 +12,6 @@ import { errorMessage } from '../lib/api';
 import { Avatar, Button, Spinner, confirmAction, toast, useAsync } from '../ui/components';
 import { PhoneField, type PhoneValue } from '../ui/PhoneField';
 import { getNav } from '../ui/nav';
-import { takePhoto } from '../ui/Camera';
 import { Camera, Close, Contacts, Lock, People, Plus, Trash, ArrowUp, Check, Pencil } from '../ui/icons';
 import { invite } from './NewChat';
 import { ZoomImage } from '../ui/ZoomImage';
@@ -62,10 +61,8 @@ export function openAttachSheet(conv: Conv) {
   getNav().present((close) => <AttachSheet conv={conv} close={close} />, { variant: 'card' });
 }
 
-/** A photo from the in-app camera; falls back to the system camera. */
-export async function cameraPhoto(): Promise<File | null> {
-  try { return await takePhoto(); } catch { return pickFile('image/*', true); }
-}
+/** A photo from the phone's own camera app. */
+export const cameraPhoto = (): Promise<File | null> => pickFile('image/*', true);
 
 export function pickFile(accept: string, capture?: boolean): Promise<File | null> {
   return new Promise((resolve) => {

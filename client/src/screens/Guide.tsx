@@ -56,7 +56,6 @@ const WHATS_NEW: string[] = [
   'Public mode: post photos for all your friends and comment on their posts – in the Friends tab.',
   'A Friends tab: add people you know and accept friend requests.',
   'Comment under vlog posts – everyone in your friend group sees it.',
-  'New camera: opens straight away, double-tap to flip it.',
   'Tap the reactions under a message to see who reacted.',
   'Make your own stickers: tap the sticker icon, then “From photo” – Haven cuts out the person or object automatically.',
   'New: Haven stickers – tap the sticker icon in the message field.',
