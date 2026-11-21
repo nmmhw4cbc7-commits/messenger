@@ -53,7 +53,6 @@ export const WHATS_NEW_VERSION = '2026-11-15c';
 const SEEN_KEY = 'haven.whatsNewSeen';
 
 const WHATS_NEW: string[] = [
-  'Public mode: post photos for all your friends and comment on their posts – in the Friends tab.',
   'A Friends tab: add people you know and accept friend requests.',
   'Comment under vlog posts – everyone in your friend group sees it.',
   'Tap the reactions under a message to see who reacted.',
