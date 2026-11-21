@@ -64,13 +64,13 @@ export function FriendsTab({ active, onChat }: { active: boolean; onChat: (convI
             <Button onClick={() => act('accept', p.id)} loading={busy === p.id}>Accept</Button>
             <button class="nav-button" onClick={() => act('remove', p.id)}>Decline</button>
           </>))}
-          <h3 class="section-title">Your friends</h3>
-          {data.friends.length === 0 && <p class="fine-print">No friends yet. Add people below.</p>}
-          {data.friends.filter(hit).map((p) => row(p, <button class="nav-button bold" onClick={() => chat(p)}>Message</button>))}
           {data.suggestions.length > 0 && <h3 class="section-title">People you may know</h3>}
           {data.suggestions.filter(hit).map((p) => row(p, data.outgoing.includes(p.id)
             ? <button class="nav-button" onClick={() => act('remove', p.id)}>Requested</button>
             : <Button onClick={() => act('request', p.id)} loading={busy === p.id}>Add</Button>))}
+          <h3 class="section-title">Your friends</h3>
+          {data.friends.length === 0 && <p class="fine-print">No friends yet. Add people above.</p>}
+          {data.friends.filter(hit).map((p) => row(p, <button class="nav-button bold" onClick={() => chat(p)}>Message</button>))}
           {data.friends.length === 0 && data.suggestions.length === 0 && data.incoming.length === 0 && (
             <Empty icon={<People size={32} />} title="Invite your friends" text="Share your group's invite link – people who join show up here." />
           )}
